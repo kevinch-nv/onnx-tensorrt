@@ -28,10 +28,11 @@
 #include <cassert>
 
 #define MAKE_ERROR(desc, code) \
-  Status((code), (desc), __FILE__, __LINE__, __func__)
+  onnx2trt::Status((code), (desc), __FILE__, __LINE__, __func__)
 
 #define ASSERT(condition, error_code) do { \
     if( !(condition) ) { \
+      cout << "aiya" << endl; \
       return MAKE_ERROR("Assertion failed: " #condition, (error_code)); \
     } \
   } while(0)

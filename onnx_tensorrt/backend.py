@@ -19,8 +19,6 @@
  # DEALINGS IN THE SOFTWARE.
 
 from __future__ import print_function
-from . import parser
-from . import runtime as parser_runtime
 from .tensorrt_engine import Engine
 import tensorrt as trt
 from onnx.backend.base import Backend, BackendRep, Device, DeviceType, namedtupledict
@@ -51,20 +49,44 @@ def count_trailing_ones(vals):
 def _tensorrt_version():
     return [int(n) for n in trt.__version__.split('.')]
 
+# If TensorRT major is >= 5, then we use new Python bindings
+USE_PYBIND = _tensorrt_version()[0] >= 5
+#USE_PYBIND = False
+
+if USE_PYBIND:
+    TRT_LOGGER = trt.Logger(trt.Logger.INFO)
+
+# if not USE_PYBIND:
+#     from . import parser
+#     from . import runtime as parser_runtime
+
+
 class TensorRTBackendRep(BackendRep):
     def __init__(self, model, device, max_batch_size=32,
                  max_workspace_size=None, serialize_engine=True, **kwargs):
         if not isinstance(device, Device):
             device = Device(device)
         self._set_device(device)
-        self._logger = trt.infer.ConsoleLogger(trt.infer.LogSeverity.WARNING)
-        self.builder = trt.infer.create_infer_builder(self._logger)
+
+        if USE_PYBIND:
+            self._logger = TRT_LOGGER
+            self.builder = trt.Builder(self._logger)
+        else:
+            self._logger = trt.infer.ConsoleLogger(trt.infer.LogSeverity.WARNING)
+            self.builder = trt.infer.create_infer_builder(self._logger)
+
         self.network = self.builder.create_network()
-        self.parser  = parser.create_parser(self.network, self._logger)
+
+        if USE_PYBIND:
+            self.parser = trt.OnnxParser(self.network, self._logger)
+        else:
+            self.parser = parser.create_parser(self.network, self._logger)
+
         if not isinstance(model, six.string_types):
             model_str = model.SerializeToString()
         else:
             model_str = model
+        print ("Parsing model...")
         if not self.parser.parse(model_str):
             error = self.parser.get_error(0)
             msg = "While parsing node number %i:\n" % error.node()
@@ -74,9 +96,22 @@ class TensorRTBackendRep(BackendRep):
             raise RuntimeError(msg)
         if max_workspace_size is None:
             max_workspace_size = 1 << 28
-        self.builder.set_max_batch_size(max_batch_size)
-        self.builder.set_max_workspace_size(max_workspace_size)
+
+        if USE_PYBIND:
+            self.builder.max_batch_size = max_batch_size
+            self.builder.max_workspace_size = max_workspace_size
+        else:
+            self.builder.set_max_batch_size(max_batch_size)
+            self.builder.set_max_workspace_size(max_workspace_size)
+
+        # for layer in self.network:
+        #     print(layer.name)
+        print ("Done parsing...")
+        print(self.network[-1].get_output(0).shape)
+        #import pdb; pdb.set_trace()
+            
         trt_engine = self.builder.build_cuda_engine(self.network)
+        print ("Built engine")
         if trt_engine is None:
             raise RuntimeError("Failed to build TensorRT engine from network")
         if serialize_engine:
@@ -92,12 +127,21 @@ class TensorRTBackendRep(BackendRep):
         assert(device.type == DeviceType.CUDA)
         cudaSetDevice(device.device_id)
     def _serialize_deserialize(self, trt_engine):
-        self.runtime = trt.infer.create_infer_runtime(self._logger)
-        self.plugin_factory = parser_runtime.create_plugin_factory(self._logger)
+        if USE_PYBIND:
+            self.runtime = trt.Runtime(TRT_LOGGER)
+        else:
+            self.runtime = trt.infer.create_infer_runtime(self._logger)
+            self.plugin_factory = parser_runtime.create_plugin_factory(self._logger)
+
         serialized_engine = trt_engine.serialize()
         del self.parser # Parser no longer needed for ownership of plugins
-        trt_engine = self.runtime.deserialize_cuda_engine(
-            serialized_engine, self.plugin_factory)
+
+        if USE_PYBIND:
+            trt_engine = self.runtime.deserialize_cuda_engine(
+                serialized_engine)
+        else:
+            trt_engine = self.runtime.deserialize_cuda_engine(
+                serialized_engine, self.plugin_factory)
         return trt_engine
     def run(self, inputs, **kwargs):
         """Execute the prepared engine and return the outputs as a named tuple.

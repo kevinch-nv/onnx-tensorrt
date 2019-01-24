@@ -1522,7 +1522,9 @@ DEFINE_BUILTIN_OP_IMPORTER(Softmax) {
   ASSERT(inputs.at(0).is_tensor(), ErrorCode::kUNSUPPORTED_NODE);
   OnnxAttrs attrs(node);
   int axis = attrs.get("axis", 1);
+  cout << "test" << endl;
   ASSERT(axis != BATCH_DIM, ErrorCode::kUNSUPPORTED_NODE);
+  cout << "test2" << endl;
   int ndim = inputs.at(0).shape().nbDims;
   if( axis < 0 ) {
     axis += ndim; // Negative indexing
