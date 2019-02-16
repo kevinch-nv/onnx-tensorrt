@@ -102,11 +102,12 @@ class TensorRTBackendRep(BackendRep):
             self.builder.set_max_batch_size(max_batch_size)
             self.builder.set_max_workspace_size(max_workspace_size)
 
-        for layer in self.network:
-            print(layer.name)
+        print ("Running Test")
+        print (model.graph.name)
+        #for layer in self.network:
+        #    print(layer.name)
 
-        print(self.network[-1].get_output(0).shape)
-        import pdb; pdb.set_trace()
+        #print(self.network[-1].get_output(0).shape)
             
         trt_engine = self.builder.build_cuda_engine(self.network)
         if trt_engine is None:
@@ -126,19 +127,17 @@ class TensorRTBackendRep(BackendRep):
     def _serialize_deserialize(self, trt_engine):
         if USE_PYBIND:
             self.runtime = trt.Runtime(TRT_LOGGER)
+            self.plugin_factory = trt.OnnxPluginFactory(TRT_LOGGER)
         else:
             self.runtime = trt.infer.create_infer_runtime(self._logger)
             self.plugin_factory = parser_runtime.create_plugin_factory(self._logger)
 
         serialized_engine = trt_engine.serialize()
         del self.parser # Parser no longer needed for ownership of plugins
+        print ("deserailized")
+        trt_engine = self.runtime.deserialize_cuda_engine(serialized_engine, self.plugin_factory)
 
-        if USE_PYBIND:
-            trt_engine = self.runtime.deserialize_cuda_engine(
-                serialized_engine)
-        else:
-            trt_engine = self.runtime.deserialize_cuda_engine(
-                serialized_engine, self.plugin_factory)
+        #trt_engine = self.runtime.deserialize_cuda_engine(serialized_engine)
         return trt_engine
     def run(self, inputs, **kwargs):
         """Execute the prepared engine and return the outputs as a named tuple.
