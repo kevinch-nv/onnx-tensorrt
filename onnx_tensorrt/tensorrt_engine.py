@@ -131,6 +131,10 @@ class Engine(object):
         if isinstance(inputs, dict):
             inputs = [inputs[b.name] for b in self.inputs]
         batch_size = inputs[0].shape[0]
+        print ("BATCH SIZE")
+        print (batch_size)
+        for asdf in self.inputs:
+            print (asdf.shape)
         for i, (input_array, input_binding) in enumerate(zip(inputs, self.inputs)):
             if input_array.shape[0] != batch_size:
                 raise ValueError("All inputs must have same batch size")
@@ -144,6 +148,10 @@ class Engine(object):
                 input_array = input_array.reshape(new_shape)
             expected_shape = tuple(input_binding.shape[1:])
             given_shape    = tuple(input_array.shape[1:])
+            print ("expected_shape")
+            print (expected_shape)
+            print ("given_shape")
+            print(given_shape)
             if given_shape != expected_shape:
                 raise ValueError("Wrong shape for input %i. Expected %s, got %s." %
                                  (i, expected_shape, given_shape))

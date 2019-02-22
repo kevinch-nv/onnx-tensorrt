@@ -34,7 +34,7 @@ import onnx_tensorrt.backend as trt
 pytest_plugins = 'onnx.backend.test.report',
 
 backend_test = onnx.backend.test.BackendTest(trt, __name__)
-backend_test.include(r'[a-z,_]*_selu_[a-z,_]*')
+backend_test.include(r'[a-z,_]*_abs_[a-z,_]*')
 
 # # Ops that are not currently supported
 # backend_test.exclude(r'[a-z,_]*_cast_[a-z,_]*')

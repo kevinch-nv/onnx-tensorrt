@@ -107,7 +107,7 @@ class TensorRTBackendRep(BackendRep):
         #for layer in self.network:
         #    print(layer.name)
 
-        #print(self.network[-1].get_output(0).shape)
+        print(self.network[-1].get_output(0).shape)
             
         trt_engine = self.builder.build_cuda_engine(self.network)
         if trt_engine is None:
@@ -146,7 +146,11 @@ class TensorRTBackendRep(BackendRep):
         """
         if isinstance(inputs, np.ndarray):
             inputs = [inputs]
+        print (inputs)
+        print (inputs[0].shape)
         outputs = self.engine.run(inputs)
+        print (outputs)
+        print (outputs[0].shape)
         output_names = [output.name for output in self.engine.outputs]
         for i, (name, array) in enumerate(zip(output_names, outputs)):
             output_shape = self._output_shapes[name]
