@@ -1225,6 +1225,8 @@ DEFINE_BUILTIN_OP_IMPORTER(MaxPool) {
 
     // TODO: Since TensorRT only 0 pads, need to do an elementwise ADD with
     // -INFINITY on the padded dimensions to ensure max pooling functions as expected.
+    // This negatively impacts performance. Update when non-zero padding is supported in a 
+    // future TRT version.
 
     nvinfer1::Dims padded_dims = tensor_ptr->getDimensions();
     ASSERT(padded_dims.nbDims == 3, ErrorCode::kUNSUPPORTED_NODE);
