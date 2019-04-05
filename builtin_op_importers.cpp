@@ -1675,108 +1675,55 @@ DEFINE_BUILTIN_OP_IMPORTER(Size) {
   return {{weights}};
 }
 
+// TRT-7031: add tests
 DEFINE_BUILTIN_OP_IMPORTER(Slice) {
-  ASSERT(inputs.size() == 1, ErrorCode::kINVALID_NODE);
-  nvinfer1::ITensor* tensor_ptr = &convertToTensor(inputs.at(0), ctx);
-  nvinfer1::Dims dims = tensor_ptr->getDimensions();
-  int nbDims = dims.nbDims;
+  ASSERT(inputs.at(0).is_tensor(), ErrorCode::kUNSUPPORTED_NODE);
+  nvinfer1::ITensor& tensor = inputs.at(0).tensor();
   OnnxAttrs attrs(node);
-  // We don't support implicit indexing due to
-  // inability to deal with batch dim slicing
-  // (TRT doesn't support batch dim slicing)
-  ASSERT(attrs.count("axes"), ErrorCode::kUNSUPPORTED_NODE);
-  auto axes = attrs.get<std::vector<int>>("axes");
-  auto starts = attrs.get<std::vector<int>>("starts");
-  auto ends = attrs.get<std::vector<int>>("ends");
-  int H_idx = -1, W_idx = -1;
-  // This will be modified to contain expanded dims metadata,
-  // if needed (e.g. input tensor is 2D)
-  int num_artificial_dims = 0;
-  bool need_to_expand_dims = nbDims < 3;
+  const auto starts = attrs.get<std::vector<int>>("starts");
+  const auto ends = attrs.get<std::vector<int>>("ends");
+  // Note: The optional "axes" must be provided, otherwise ONNX defaults to also slicing in batch dimension, which TensorRT does not support.
+  ASSERT(attrs.count("axes") != 0, ErrorCode::kUNSUPPORTED_NODE);
+  const auto axes = attrs.get<std::vector<int>>("axes");
+  ASSERT(axes.size() == starts.size() && axes.size() == starts.size(), ErrorCode::kINVALID_VALUE);
 
-  // Argument validation
-  // Since indexing is explicit, there must be
-  // equal number of axis, start and end indices
-  ASSERT((axes.size() == starts.size())
-    && (starts.size() == ends.size()), ErrorCode::kUNSUPPORTED_NODE);
-
-  for (size_t i = 0; i < axes.size(); ++i)
-  {
+  const nvinfer1::Dims dims = tensor.getDimensions();
+  const int nbDims = dims.nbDims;
+  auto makeDims = [nbDims](int initVal)->nvinfer1::Dims{
+    nvinfer1::Dims result{nbDims, {},{}};
+    std::fill_n(&result.d[0], nbDims, initVal);
+    return result;
+  };
+  nvinfer1::Dims sliceStart = makeDims(0);
+  nvinfer1::Dims sliceSize = dims;
+  const nvinfer1::Dims sliceStride = makeDims(1); // ONNX has no support for strides in Slice
+  for (size_t i = 0; i < axes.size(); i++){
     int axis = axes[i];
-    // We don't allow slicing batch dim, due to TRT limitations
-    TRT_CHECK(convert_axis(axis, nbDims));
-
-    starts[i] = slice_clip_index(dims.d[axis], starts[i]);
-    ends[i] = slice_clip_index(dims.d[axis], ends[i]);
-
-    // TRT only supports slicing HW dims when using padding layer,
-    // so if user wants to slice some other axis, we check whether
-    // slice contains full dimension
-    if (axes[i] != nbDims-1 && axes[i] != nbDims)
+    // Special passthrough for starts[i] == 0 and ends[i] < 0 (no-op)
+    if (starts[i] == 0 && ends[i] < 0)
     {
-      ASSERT((ends[i] - starts[i]) == dims.d[axis], ErrorCode::kUNSUPPORTED_NODE);
+      continue;
     }
+    TRT_CHECK(convert_axis(axis, nbDims));
+    sliceStart.d[axis] = starts[i];
+    // Handles case where some exporters export a very large ends number to slice across the whole dimension
+    if (!(ends[i] > dims.d[axis]) && ends[i] > 0)
+    {
+      sliceSize.d[axis] = ends[i] - starts[i];
+    }
+    // If ends is not defined but starts is, use correct size
     else
     {
-      if (axes[i] == nbDims-1)
-      {
-        H_idx = i;
-      }
-      else if (axes[i] == nbDims)
-      {
-        W_idx = i;
-      }
+      sliceSize.d[axis] = sliceSize.d[axis] - starts[i];
     }
   }
-
-  // This case requires hack where you unsqueeze input tensor
-  // before running TRT padding layer, since it accepts tensors
-  // of dimension >= 3 [not counting batch dim]
-  if (need_to_expand_dims)
+  // If entire slice op was a no-op, return input tensor.
+  if (sliceStart == makeDims(0) && sliceSize == dims)
   {
-    nvinfer1::Dims expanded_dims;
-    expanded_dims.nbDims = 3;
-    num_artificial_dims = 3 - nbDims;
-    for (int i = 0; i < num_artificial_dims; ++i)
-    {
-      expanded_dims.d[i] = 1;
-    }
-    for (int i = 0; i < nbDims; ++i)
-    {
-      expanded_dims.d[num_artificial_dims + i] = dims.d[i];
-    }
-    tensor_ptr = reshape_tensor(ctx, *tensor_ptr, expanded_dims);
+    // cout << "Slice is no-op, returning input..." << endl;
+    return {{&tensor}};
   }
-
-  nvinfer1::DimsHW start_pad, end_pad;
-  start_pad.h() = (H_idx != -1) ? starts[H_idx] : 0;
-  end_pad.h() = (H_idx != -1) ? dims.d[nbDims - 2] - ends[H_idx] : 0;
-  start_pad.w() = (W_idx != -1) ? starts[W_idx] : 0;
-  end_pad.w() = (W_idx != -1) ? dims.d[nbDims - 1] - ends[W_idx] : 0;
-
-  auto layer_ptr = ctx->network()->addPadding(*tensor_ptr, -start_pad, -end_pad);
-  ASSERT(layer_ptr, ErrorCode::kUNSUPPORTED_NODE);
-  auto layer_out = layer_ptr->getOutput(0);
-
-  // Squeeze back artificial dimensions introduced earlier
-  if (need_to_expand_dims)
-  {
-    nvinfer1::Dims expanded_dims;
-    int original_dims_nb = nbDims;
-    nvinfer1::Dims squeezed_dims;
-    expanded_dims = layer_out->getDimensions();
-    squeezed_dims.nbDims = original_dims_nb;
-    for (int i = 0; i < original_dims_nb; ++i)
-    {
-      squeezed_dims.d[i] = expanded_dims.d[num_artificial_dims + i];
-    }
-    tensor_ptr = reshape_tensor(ctx, *layer_out, squeezed_dims);
-  }
-  else // No squeezing required, we'll just return padding layer result
-  {
-    tensor_ptr = layer_out;
-  }
-  return {{tensor_ptr}};
+  RETURN_FIRST_OUTPUT(ctx->network()->addSlice(tensor, sliceStart, sliceSize, sliceStride));
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(Softmax) {
