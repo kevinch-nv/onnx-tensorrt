@@ -137,7 +137,7 @@ Status importInputs(ImporterContext* importer_ctx,
 
 NodeImportResult ModelImporter::importNode(::ONNX_NAMESPACE::NodeProto const& node,
                                            std::vector<TensorOrWeights>& inputs,
-                                           std::vector<std::string>& output_names) {
+                                           std::vector<std::pair<std::string, int32_t>>& graph_outputs) {
   if( !_op_importers.count(node.op_type()) ) {
     return MAKE_ERROR("No importer registered for op: " + node.op_type(),
                       ErrorCode::kUNSUPPORTED_NODE);
@@ -151,13 +151,15 @@ NodeImportResult ModelImporter::importNode(::ONNX_NAMESPACE::NodeProto const& no
 
   // Check if output's node name is a graph's output.
   bool is_graph_output = false;
+  int32_t output_dtype = 0;
   for (size_t i = 0; i < (size_t)node.output().size(); i++)
   {
-    for (size_t j = 0; j < output_names.size(); j++)
+    for (size_t j = 0; j < graph_outputs.size(); j++)
     {
-      if (node.output(i) == output_names[j])
+      if (node.output(i) == graph_outputs[j].first)
       {
         is_graph_output = true;
+        output_dtype = graph_outputs[j].second;
         break;
       }
     }
@@ -177,6 +179,10 @@ NodeImportResult ModelImporter::importNode(::ONNX_NAMESPACE::NodeProto const& no
           {
             outputs.at(i) = TensorOrWeights(&convert_output_weight_to_tensor(output, &_importer_ctx));
             TensorOrWeights& output = outputs.at(i);
+            nvinfer1::DataType trt_output_dtype;
+            convert_dtype(output_dtype, &trt_output_dtype);
+            // Set output tensor name and type.
+            output.tensor().setType(trt_output_dtype);
             output.tensor().setName(node_output_name.c_str());
           }
         }
@@ -517,11 +523,12 @@ ModelImporter::importModel(::ONNX_NAMESPACE::ModelProto const &model,
   }
   ::ONNX_NAMESPACE::GraphProto const& graph = model.graph();
 
-  std::vector<std::string>output_names;
+  std::vector<std::pair<std::string, int32_t> > graph_outputs;
   int num_outputs = model.graph().output_size();
   for (int i = 0; i < num_outputs; i++)
   {
-    output_names.push_back(model.graph().output(i).name());
+    graph_outputs.push_back(std::make_pair(model.graph().output(i).name(),
+      model.graph().output(i).type().tensor_type().elem_type()));
   }
 
   string_map<TensorOrWeights> tensors;
@@ -538,7 +545,7 @@ ModelImporter::importModel(::ONNX_NAMESPACE::ModelProto const &model,
       inputs.push_back(tensors.at(input_name));
     }
     std::vector<TensorOrWeights> outputs;
-    GET_VALUE(this->importNode(node, inputs, output_names), &outputs);
+    GET_VALUE(this->importNode(node, inputs, graph_outputs), &outputs);
     for( size_t i=0; i<outputs.size(); ++i ) {
       std::string node_output_name = node.output(i);
       TensorOrWeights& output = outputs.at(i);

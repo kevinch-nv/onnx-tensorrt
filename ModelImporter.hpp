@@ -42,7 +42,7 @@ class ModelImporter final : public nvonnxparser::IParser {
                      onnxTensorDescriptorV1 const *weight_descriptors);
   NodeImportResult importNode(::ONNX_NAMESPACE::NodeProto const& node,
                               std::vector<TensorOrWeights>& inputs,
-                              std::vector<std::string>& output_names);
+                              std::vector<std::pair<std::string, int32_t>>& output_names);
 public:
   ModelImporter(nvinfer1::INetworkDefinition* network,
                 nvinfer1::ILogger* logger)
