@@ -720,10 +720,23 @@ DEFINE_BUILTIN_OP_IMPORTER(Constant) {
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(Conv) {
-    ASSERT(inputs.at(0).is_tensor(),  ErrorCode::kUNSUPPORTED_NODE);
+    //ASSERT(inputs.at(0).is_tensor(),  ErrorCode::kUNSUPPORTED_NODE);
+
     ASSERT(inputs.at(1).is_weights(), ErrorCode::kUNSUPPORTED_NODE);
 
-    nvinfer1::ITensor* tensor_ptr = &inputs.at(0).tensor();
+    nvinfer1::ITensor* tensor_ptr;
+
+    if (inputs.at(0).is_tensor())
+    {
+      tensor_ptr = &inputs.at(0).tensor();
+    }
+    else
+    {
+      auto weights = inputs.at(0).weights();
+      weights.shape = remove_dim(weights.shape, BATCH_DIM);
+      auto* layer = ctx->network()->addConstant(weights.shape, weights);
+      tensor_ptr = layer->getOutput(0);
+    }
     auto kernel_weights = inputs.at(1).weights();
     nvinfer1::Dims dims = tensor_ptr->getDimensions();
     #if NV_TENSORRT_MAJOR >= 4
@@ -1669,8 +1682,9 @@ DEFINE_BUILTIN_OP_IMPORTER(Size) {
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(Slice) {
-  ASSERT(inputs.at(0).is_tensor(), ErrorCode::kUNSUPPORTED_NODE);
-  nvinfer1::ITensor& tensor = inputs.at(0).tensor();;
+  //ASSERT(inputs.at(0).is_tensor(), ErrorCode::kUNSUPPORTED_NODE);
+  nvinfer1::ITensor& tensor = convertToTensor(inputs.at(0), ctx);
+  cout << tensor.getDimensions()<< endl;
   OnnxAttrs attrs(node);
   const auto starts = attrs.get<std::vector<int64_t>>("starts");
   const auto ends = attrs.get<std::vector<int64_t>>("ends");
@@ -1688,6 +1702,10 @@ DEFINE_BUILTIN_OP_IMPORTER(Slice) {
   nvinfer1::Dims sliceSize = dims;
   const nvinfer1::Dims sliceStride = makeDims(1); // ONNX has no support for strides in Slice
   for (size_t i = 0; i < axes.size(); i++){
+    cout << i << endl;
+    cout << starts[i] << endl;
+    cout << ends[i] << endl;
+    cout << dims.d[i] << endl;
     int axis = axes[i];
     // Special pass through for no-ops (slice across the whole dimension, [:])
     if (starts[i] == 0 && ends[i] >= dims.d[i])
