@@ -1706,8 +1706,8 @@ DEFINE_BUILTIN_OP_IMPORTER(Size) {
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(Slice) {
-  ASSERT(inputs.at(0).is_tensor(), ErrorCode::kUNSUPPORTED_NODE);
-  nvinfer1::ITensor& tensor = inputs.at(0).tensor();;
+  //ASSERT(inputs.at(0).is_tensor(), ErrorCode::kUNSUPPORTED_NODE);
+  nvinfer1::ITensor& tensor = convertToTensor(inputs.at(0), ctx);
   OnnxAttrs attrs(node);
   const auto starts = attrs.get<std::vector<int64_t>>("starts");
   const auto ends = attrs.get<std::vector<int64_t>>("ends");
@@ -1724,10 +1724,17 @@ DEFINE_BUILTIN_OP_IMPORTER(Slice) {
   nvinfer1::Dims sliceStart = makeDims(0);
   nvinfer1::Dims sliceSize = dims;
   const nvinfer1::Dims sliceStride = makeDims(1); // ONNX has no support for strides in Slice
-  for (size_t i = 0; i < axes.size(); i++){
+  int diff = axes.size() - nbDims;
+  ASSERT (diff >= 0, ErrorCode::kINVALID_NODE);
+  for (size_t i = (size_t)diff; i < axes.size(); i++){
+    int j = i;
+    if (diff > 0)
+    {
+      j = i - diff;
+    }
     int axis = axes[i];
     // Special pass through for no-ops (slice across the whole dimension, [:])
-    if (starts[i] == 0 && ends[i] >= dims.d[i])
+    if (starts[i] == 0 && ends[i] >= dims.d[j])
     {
       continue;
     }
