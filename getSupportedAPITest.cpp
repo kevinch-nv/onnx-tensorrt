@@ -53,20 +53,20 @@ void printSubGraphs(SubGraphCollection_t& subGraphs, ::ONNX_NAMESPACE::ModelProt
         cout << "The model is fully supported by TensorRT. Printing the parsed graph:" << endl;
     }
 
-    for (auto subGraph: subGraphs) 
-    {
-        cout << "\t{";
-        for (auto idx: subGraph.first) cout << "\t" << idx << "," <<onnx_model.graph().node(idx).op_type();
-        cout << "\t}\t - ";
-        if (subGraph.second)
-        {
-            cout << "Fully supported" << endl;
-        }
-        else
-        {
-            cout << "UNKNOWN whether this is fully supported." << endl; 
-        }
-    }
+    // for (auto subGraph: subGraphs) 
+    // {
+    //     cout << "\t{";
+    //     for (auto idx: subGraph.first) cout << "\t" << idx << "," <<onnx_model.graph().node(idx).op_type();
+    //     cout << "\t}\t - ";
+    //     if (subGraph.second)
+    //     {
+    //         cout << "Fully supported" << endl;
+    //     }
+    //     else
+    //     {
+    //         cout << "UNKNOWN whether this is fully supported." << endl; 
+    //     }
+    // }
 }
 
 

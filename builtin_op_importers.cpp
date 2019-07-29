@@ -1089,7 +1089,6 @@ DEFINE_BUILTIN_OP_IMPORTER(Gemm) {
     nvinfer1::MatrixOperation opA = getMatrixOp(*inputASqueezed, transA);
     nvinfer1::MatrixOperation opB = getMatrixOp(*inputB, transB);
 
-
     if (opA == nvinfer1::MatrixOperation::kVECTOR && opB == nvinfer1::MatrixOperation::kVECTOR)
     {
       ASSERT(inputASqueezed->getDimensions() == inputB->getDimensions(), ErrorCode::kUNSUPPORTED_NODE);

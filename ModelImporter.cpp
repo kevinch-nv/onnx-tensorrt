@@ -55,7 +55,7 @@ Status importInput(ImporterContext* importer_ctx,
   ASSERT_INPUT(onnx_tensor_type.shape().dim().size() > 0,
          ErrorCode::kUNSUPPORTED_NODE, input.name());
   nvinfer1::Dims trt_dims;
-  TRT_CHECK(convert_dims(onnx_tensor_type.shape().dim(), trt_dims));
+  ASSERT_INPUT(convert_dims(onnx_tensor_type.shape().dim(), trt_dims), ErrorCode::kUNSUPPORTED_NODE, input.name());
   nvinfer1::ITensor* user_input = importer_ctx->getUserInput(input.name().c_str());
   if( user_input ) {
     ASSERT_INPUT(user_input, ErrorCode::kINVALID_VALUE, input.name());
@@ -341,9 +341,9 @@ bool ModelImporter::supportsModel(void const *serialized_onnx_model,
     for (int i = 0; i < nerror; ++i) 
     {
       nvonnxparser::IParserError const* error = getError(i);
-      if (error->node() != -1) 
+      if (error->node() >= 0) 
       {
-        cout << "Found unsupport node: " << error->node() << endl;
+        cout << "Found unsupported node: " << error->node() << endl;
         error_node = error->node();
         allSupported = false;
       }
@@ -355,6 +355,7 @@ bool ModelImporter::supportsModel(void const *serialized_onnx_model,
         // around MAKE_INPUT_ERROR.
         cout << "Found unsupported input: " << error->file() << endl;
         input_node = error->file();
+        return false;
       }
     }
   }
@@ -370,6 +371,7 @@ bool ModelImporter::supportsModel(void const *serialized_onnx_model,
     ::ONNX_NAMESPACE::NodeProto const& node =  model.graph().node(node_idx);
     // Check for connecting nodes to faulty input nodes and mark them as unsupported
     bool contains_input = (input_node == "") ? false : check_for_input(node, input_node);
+    // cout << contains_input << endl;
     if (this->supportsOperator(node.op_type().c_str()) && !contains_input) 
     {
       if (newSubGraph) 
