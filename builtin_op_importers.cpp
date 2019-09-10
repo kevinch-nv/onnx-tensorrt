@@ -1230,18 +1230,20 @@ DEFINE_BUILTIN_OP_IMPORTER(LSTM) {
 
 DEFINE_BUILTIN_OP_IMPORTER(MatMul)
 {
-    nvinfer1::ITensor& inputA = convertToTensor(inputs.at(0), ctx);
-    nvinfer1::ITensor& inputB = convertToTensor(inputs.at(1), ctx);
+    nvinfer1::ITensor* inputA = &convertToTensor(inputs.at(0), ctx);
+    nvinfer1::ITensor* inputB = &convertToTensor(inputs.at(1), ctx);
+
+    broadcast_tensors(ctx, inputA, inputB);
 
     constexpr auto getMatrixOp = [](const nvinfer1::ITensor& input) {
         return (input.getDimensions().nbDims == 1) ? nvinfer1::MatrixOperation::kVECTOR
                                                    : nvinfer1::MatrixOperation::kNONE;
     };
 
-    nvinfer1::MatrixOperation opA = getMatrixOp(inputA);
-    nvinfer1::MatrixOperation opB = getMatrixOp(inputB);
+    nvinfer1::MatrixOperation opA = getMatrixOp(*inputA);
+    nvinfer1::MatrixOperation opB = getMatrixOp(*inputB);
 
-    nvinfer1::IMatrixMultiplyLayer* matmul = ctx->network()->addMatrixMultiply(inputA, opA, inputB, opB);
+    nvinfer1::IMatrixMultiplyLayer* matmul = ctx->network()->addMatrixMultiply(*inputA, opA, *inputB, opB);
     return {{matmul->getOutput(0)}};
 }
 

@@ -88,18 +88,13 @@ NodeImportResult addScale(IImporterContext* ctx, nvinfer1::ITensor& tensor_, nvi
     {
         // Expand or squash dims to 4D
         nvinfer1::Dims new_shape = dims;
-        if (new_shape.nbDims < expectedNbDims)
+        while (new_shape.nbDims < expectedNbDims)
         {
-            nvinfer1::Dims new_dims = expand_dims(orig_shape, expectedNbDims);
-            tensor_ptr = reshape_tensor(ctx, *tensor_ptr, new_dims);
+            new_shape.d[new_shape.nbDims++] = 1;
         }
-        else
+        while (new_shape.nbDims > expectedNbDims)
         {
-            while (new_shape.nbDims > expectedNbDims)
-            {
-                new_shape.d[3] *= new_shape.d[--new_shape.nbDims];
-            }
-            tensor_ptr = reshape_tensor(ctx, *tensor_ptr, new_shape);
+            new_shape.d[3] *= new_shape.d[--new_shape.nbDims];
         }
         ASSERT(tensor_ptr, ErrorCode::kUNSUPPORTED_NODE);
         dims = tensor_ptr->getDimensions();
