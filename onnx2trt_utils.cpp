@@ -289,22 +289,7 @@ void broadcast_tensors(IImporterContext* ctx, nvinfer1::ITensor*& t1, nvinfer1::
 
     nvinfer1::Dims largeDims = largeTensor->getDimensions();
     nvinfer1::Dims smallDims = smallTensor->getDimensions();
-    nvinfer1::Dims newDims({largeDims.nbDims, {1, 1, 1, 1, 1, 1, 1, 1}});
-
-    int i(0), j(0);
-    while (i < smallDims.nbDims && j < largeDims.nbDims)
-    {
-        if (smallDims.d[i] == largeDims.d[j])
-        {
-            newDims.d[j] = largeDims.d[j];
-            i++;
-            j++;
-        }
-        else
-        {
-            j++;
-        }
-    }
+    nvinfer1::Dims newDims = expand_dims(smallDims, largeDims.nbDims);
 
     t1 == smallTensor ? t1 = reshape_tensor(ctx, *t1, newDims) : t2 = reshape_tensor(ctx, *t2, newDims);
 }
