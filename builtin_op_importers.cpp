@@ -708,13 +708,48 @@ DEFINE_BUILTIN_OP_IMPORTER(Flatten)
 
 DEFINE_BUILTIN_OP_IMPORTER(Gather)
 {
-    nvinfer1::ITensor& data = convertToTensor(inputs.at(0), ctx);
-    nvinfer1::ITensor& indices = convertToTensor(inputs.at(1), ctx);
+    nvinfer1::ITensor* data = &convertToTensor(inputs.at(0), ctx);
+    nvinfer1::ITensor* indices = &convertToTensor(inputs.at(1), ctx);
     OnnxAttrs attrs(node);
     int axis = attrs.get<int>("axis", 0);
-    int nbDims = inputs.at(0).shape().nbDims;
+    nvinfer1::Dims dataDims = data->getDimensions();
+    int nbDims = dataDims.nbDims;
+
+    // Indicies must have at least one dimension in TRT 6.0.
+    bool expandIndices = indices->getDimensions().nbDims == 0;
+    if (expandIndices)
+    {
+        nvinfer1::Dims oneD {1, {1}};
+        indices = reshape_tensor(ctx, *indices, oneD);
+    }
+
     TRT_CHECK(convert_axis(axis, nbDims));
-    RETURN_FIRST_OUTPUT(ctx->network()->addGather(data, indices, axis));
+
+    auto* layer = ctx->network()->addGather(*data, *indices, axis);
+
+    auto* layerOutput = layer->getOutput(0);
+
+    // Extra dimension would have been inserted on the axis we are gathering on. Remove it here.
+    if (expandIndices)
+    {
+        nvinfer1::Dims oldDims = layerOutput->getDimensions();
+        nvinfer1::Dims newDims {nbDims-1, {1}};
+        for (int i = 0; i < newDims.nbDims; i++)
+        {
+            if (i >= axis)
+            {
+                newDims.d[i] = oldDims.d[i+1];
+            }
+            else
+            {
+                newDims.d[i] = oldDims.d[i];
+            }
+        }
+
+        layerOutput = reshape_tensor(ctx, *layerOutput, newDims);
+    }
+
+    return {{layerOutput}};
 }
 
 // Adds a constant scalar to the network in the form of a constant layer.
