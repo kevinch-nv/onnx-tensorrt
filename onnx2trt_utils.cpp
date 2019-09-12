@@ -96,6 +96,7 @@ NodeImportResult addScale(IImporterContext* ctx, nvinfer1::ITensor& tensor_, nvi
         {
             new_shape.d[3] *= new_shape.d[--new_shape.nbDims];
         }
+        tensor_ptr = reshape_tensor(ctx, *tensor_ptr, new_shape);
         ASSERT(tensor_ptr, ErrorCode::kUNSUPPORTED_NODE);
         dims = tensor_ptr->getDimensions();
     }
