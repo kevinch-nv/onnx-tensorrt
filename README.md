@@ -51,7 +51,7 @@ See more usage information by running:
 ### Python modules
 Python bindings for the ONNX-TensorRT parser are packaged in the shipped `.whl` files. Install them with
 
-    pip install <tensorrt_install_dir>/python/tensorrt-6.0.1.4-cp27-none-linux_x86_64.whl
+    pip install <tensorrt_install_dir>/python/tensorrt-6.0.1.5-cp27-none-linux_x86_64.whl
 
 TensorRT 6.0 supports ONNX release 1.5.0. Install it with:
 
