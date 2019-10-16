@@ -680,28 +680,28 @@ DEFINE_BUILTIN_OP_IMPORTER(Gather)
     nvinfer1::Dims dataDims = data->getDimensions();
     int nbDims = dataDims.nbDims;
 
-    // Indicies must have at least one dimension in TRT 6.0.
-    bool expandIndices = indices->getDimensions().nbDims == 0;
-    // Input tensor to gather on must be at least two dimensions in TRT 6.0
-    bool expandInput = nbDims == 1;
+    // // Indicies must have at least one dimension in TRT 6.0.
+    // bool expandIndices = indices->getDimensions().nbDims == 0;
+    // // Input tensor to gather on must be at least two dimensions in TRT 6.0
+    // bool expandInput = nbDims == 1;
 
-    ASSERT(!(data->getType() == nvinfer1::DataType::kINT32 && nbDims == 1 && inputs.at(0).is_tensor())
-            && "Cannot perform gather on a shape tensor!", ErrorCode::kUNSUPPORTED_NODE);
+    // ASSERT(!(data->getType() == nvinfer1::DataType::kINT32 && nbDims == 1 && inputs.at(0).is_tensor())
+    //         && "Cannot perform gather on a shape tensor!", ErrorCode::kUNSUPPORTED_NODE);
 
-    if (expandIndices)
-    {
-        std::vector<int> unsqueezeAxis {0};
-        indices = unsqueezeTensor(ctx, *indices, unsqueezeAxis);
-    }
+    // if (expandIndices)
+    // {
+    //     std::vector<int> unsqueezeAxis {0};
+    //     indices = unsqueezeTensor(ctx, *indices, unsqueezeAxis);
+    // }
 
-    if (expandInput)
-    {
-        std::vector<int> unsqueezeAxis {0};
-        data = unsqueezeTensor(ctx, *data, unsqueezeAxis);
-        // update nbDims and axis since we expanded the input to 2D.
-        nbDims = data->getDimensions().nbDims;
-        axis = axis + 1;
-    }
+    // if (expandInput)
+    // {
+    //     std::vector<int> unsqueezeAxis {0};
+    //     data = unsqueezeTensor(ctx, *data, unsqueezeAxis);
+    //     // update nbDims and axis since we expanded the input to 2D.
+    //     nbDims = data->getDimensions().nbDims;
+    //     axis = axis + 1;
+    // }
 
     TRT_CHECK(convert_axis(axis, nbDims));
 
@@ -709,21 +709,21 @@ DEFINE_BUILTIN_OP_IMPORTER(Gather)
 
     auto* layerOutput = layer->getOutput(0);
 
-    // Extra dimension would have been inserted on the axis we are gathering on. Remove it here.
-    if (expandIndices)
-    {
-        std::vector<int> squeezeAxis{axis};
-        layerOutput = squeezeTensor(ctx, *layerOutput, squeezeAxis);
-    }
+    // // Extra dimension would have been inserted on the axis we are gathering on. Remove it here.
+    // if (expandIndices)
+    // {
+    //     std::vector<int> squeezeAxis{axis};
+    //     layerOutput = squeezeTensor(ctx, *layerOutput, squeezeAxis);
+    // }
 
-    // Remove leading dimension if it was added to make output a scalar or squeeze back to 1D.
-    if (expandInput)
-    {
-        const auto currentDims = layerOutput->getDimensions().nbDims;
-        ASSERT(currentDims == 1 || currentDims == 2, ErrorCode::kUNSUPPORTED_NODE);
-        std::vector<int> squeezeAxis{0};
-        layerOutput = squeezeTensor(ctx, *layerOutput, squeezeAxis);
-    }
+    // // Remove leading dimension if it was added to make output a scalar or squeeze back to 1D.
+    // if (expandInput)
+    // {
+    //     const auto currentDims = layerOutput->getDimensions().nbDims;
+    //     ASSERT(currentDims == 1 || currentDims == 2, ErrorCode::kUNSUPPORTED_NODE);
+    //     std::vector<int> squeezeAxis{0};
+    //     layerOutput = squeezeTensor(ctx, *layerOutput, squeezeAxis);
+    // }
 
     return {{layerOutput}};
 }
