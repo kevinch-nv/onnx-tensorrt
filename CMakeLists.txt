@@ -147,7 +147,7 @@ if(${CMAKE_VERSION} VERSION_LESS ${CMAKE_VERSION_THRESHOLD})
     ${GENCODES} \
     ")
   
-  if((NOT CXX_VERSION_DEFINED) AND (NOT "${CUDA_NVCC_FLAGS}" MATCHES "-std=c\\+\\+11"))
+  if((NOT "${CUDA_NVCC_FLAGS}" MATCHES "-std=c\\+\\+") AND (NOT "${CUDA_NVCC_FLAGS}" MATCHES "-std=gnu\\+\\+"))
     list(APPEND CUDA_NVCC_FLAGS -std=c++11)
   endif()
 
@@ -162,7 +162,7 @@ else()
     ${GENCODES} \
     ")
 
-  if((NOT CXX_VERSION_DEFINED) AND (NOT "${CMAKE_CUDA_FLAGS}" MATCHES "-std=c\\+\\+11"))
+  if((NOT CXX_VERSION_DEFINED) AND (NOT "${CMAKE_CUDA_FLAGS}" MATCHES "-std=c\\+\\+") AND (NOT "${CMAKE_CUDA_FLAGS}" MATCHES "-std=gnu\\+\\+"))
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -std=c++11")
   endif()
 
@@ -172,7 +172,6 @@ endif()
 
 # Specify the cuda host compiler to use the same compiler as cmake.
 set(CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
-
 
 # CUDNN
 set(CUDNN_ROOT_DIR "" CACHE PATH "Folder contains NVIDIA cuDNN")
