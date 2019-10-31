@@ -130,7 +130,10 @@ bool check_for_int32(std::vector<TensorOrWeights>const & inputs);
 // Helper function to check if a scale layer can be used of elementwise
 bool check_for_scale(std::vector<TensorOrWeights>const & inputs);
 
-// Helper function to convert an ONNX axis into a TRT axis (supports negative indexing)
+// Helper function to sanitize that all inputs are compatible tensor types.
+bool checkForShapes(std::vector<nvinfer1::ITensor*>const & inputs, bool isShape);
+
+//Helper function to convert an ONNX axis into a TRT axis (supports negative indexing)
 Status convert_axis(int& axis, int nbDims);
 
 // Helper function to convert an ONNX datatype to a TRT datatype with INT64 downcasting

@@ -312,6 +312,11 @@ DEFINE_BUILTIN_OP_IMPORTER(Concat)
         tensors.push_back(&convertToTensor(input, ctx));
     }
 
+    bool isShape = tensors.at(0)->isShapeTensor();
+
+    ASSERT(checkForShapes(tensors, isShape) && "Cannot use concat layer on combination of shape an execution tensors!",
+        ErrorCode::kUNSUPPORTED_NODE);
+
     OnnxAttrs attrs(node);
     int axis = attrs.get<int>("axis");
     int nbDims = inputs.at(0).shape().nbDims;
@@ -319,6 +324,13 @@ DEFINE_BUILTIN_OP_IMPORTER(Concat)
     auto* layer = ctx->network()->addConcatenation(tensors.data(), tensors.size());
     ASSERT(layer, ErrorCode::kUNSUPPORTED_NODE);
     layer->setAxis(axis);
+    auto * output = layer->getOutput(0);
+
+    if (isShape)
+    {
+        ctx->network()->markOutputForShapes(*output);
+    }
+
     RETURN_FIRST_OUTPUT(layer);
 }
 
@@ -676,6 +688,19 @@ DEFINE_BUILTIN_OP_IMPORTER(Gather)
 {
     nvinfer1::ITensor* data = &convertToTensor(inputs.at(0), ctx);
     nvinfer1::ITensor* indices;
+    OnnxAttrs attrs(node);
+    int axis = attrs.get<int>("axis", 0);
+    // Special pass through for shape tensors:
+    if (data->isShapeTensor())
+    {
+        indices = &convertToTensor(inputs.at(1), ctx);
+        auto* layer = ctx->network()->addGather(*data, *indices, axis);
+        auto* output = layer->getOutput(0);
+        output->setType(nvinfer1::DataType::kINT32);
+        ctx->network()->markOutputForShapes(*output);
+        return {{output}};
+    }
+
     bool shuffleWAR{false};
     if (inputs.at(1).shape().nbDims == 0 && inputs.at(1).is_weights())
     {
@@ -688,8 +713,6 @@ DEFINE_BUILTIN_OP_IMPORTER(Gather)
         indices = &convertToTensor(inputs.at(1),ctx);
     }
 
-    OnnxAttrs attrs(node);
-    int axis = attrs.get<int>("axis", 0);
     nvinfer1::Dims dataDims = data->getDimensions();
     int nbDims = dataDims.nbDims;
 
@@ -697,10 +720,6 @@ DEFINE_BUILTIN_OP_IMPORTER(Gather)
     bool expandIndices = inputs.at(1).shape().nbDims == 0;
     // Input tensor to gather on must be at least two dimensions in TRT 6.0
     bool expandInput = nbDims == 1;
-
-    // Cannot perform gather on shape tensors in TRT 6.0
-    ASSERT(!(data->getType() == nvinfer1::DataType::kINT32 && nbDims == 1)
-            && "Cannot perform gather on a shape tensor!", ErrorCode::kUNSUPPORTED_NODE);
 
     if (expandIndices && !shuffleWAR)
     {
@@ -1533,7 +1552,10 @@ DEFINE_BUILTIN_OP_IMPORTER(Selu)
 DEFINE_BUILTIN_OP_IMPORTER(Shape)
 {
     nvinfer1::ITensor& input = convertToTensor(inputs.at(0), ctx);
-    RETURN_FIRST_OUTPUT(ctx->network()->addShape(input));
+    auto* output = ctx->network()->addShape(input)->getOutput(0);
+    // Mark output of the ShapeLayer as a shape tensor.
+    ctx->network()->markOutputForShapes(*output);
+    return {{output}};
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(Sigmoid)

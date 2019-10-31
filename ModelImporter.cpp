@@ -563,16 +563,21 @@ ModelImporter::importModel(::ONNX_NAMESPACE::ModelProto const &model,
     std::vector<TensorOrWeights> outputs;
     GET_VALUE(this->importNode(node, inputs, output_names), &outputs);
 
-    if (node.op_type() == "Shape")
-    {
-        shapeTensors.insert({node.name(), node_idx});
-    }
-
     for( size_t i=0; i<outputs.size(); ++i ) {
       std::string node_output_name = node.output(i);
       TensorOrWeights& output = outputs.at(i);
       // Note: This condition is to allow ONNX outputs to be ignored
       if( output ) {
+        // Keep track of all shape tensors.
+        if (output.is_tensor())
+        {
+            auto* outputTensor = &output.tensor();
+            if (outputTensor->isShapeTensor())
+            {
+                shapeTensors.insert({node_output_name, node_idx});
+            }
+        }
+
         ASSERT(!tensors.count(node_output_name), ErrorCode::kINVALID_GRAPH);
 
         tensors.insert({node_output_name, output});
@@ -603,7 +608,7 @@ ModelImporter::importModel(::ONNX_NAMESPACE::ModelProto const &model,
     nvinfer1::ITensor** user_output = _importer_ctx.getUserOutput(output.name().c_str());
     if( !user_output ) {
       auto outputName = output_tensor_ptr->getName();
-      if (shapeTensors.count(outputName))
+      if (shapeTensors.count(outputName) || output_tensor_ptr->isShapeTensor())
       {
           _current_node = shapeTensors.at(outputName);
           ASSERT(false && "Shape tensor outputs are unsupported!" , ErrorCode::kUNSUPPORTED_GRAPH);

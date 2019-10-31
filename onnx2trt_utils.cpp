@@ -370,6 +370,18 @@ bool check_for_scale(std::vector<TensorOrWeights>const & inputs)
     return useScale;
 }
 
+bool checkForShapes(std::vector<nvinfer1::ITensor*>const& inputs, bool isShape)
+{
+    for (auto& input : inputs)
+    {
+        if (input->isShapeTensor() != isShape)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 Status convert_axis(int& axis, int nbDims)
 {
   // Support negative indexing
