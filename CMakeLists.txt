@@ -50,6 +50,8 @@ if ( MSVC )
     set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} /W4")
 endif()
 
+find_package(Threads REQUIRED)
+
 # Build the libraries with -fPIC
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
@@ -58,9 +60,9 @@ set(PARSER_LINKER_SCRIPT  ${ONNX2TRT_ROOT}/libnvonnxparser.version)
 #--------------------------------------------------
 # Version information
 #--------------------------------------------------
-set(ONNX2TRT_MAJOR 6)
+set(ONNX2TRT_MAJOR 7)
 set(ONNX2TRT_MINOR 0)
-set(ONNX2TRT_PATCH 1)
+set(ONNX2TRT_PATCH 0)
 
 #--------------------------------------------------
 # Build configurations, global to all projects
@@ -72,6 +74,7 @@ set(IMPORTER_SOURCES
   builtin_op_importers.cpp
   onnx2trt_utils.cpp
   ShapedWeights.cpp
+  ShapeTensor.cpp
   OnnxAttrs.cpp
 )
 
@@ -202,7 +205,10 @@ find_library(TENSORRT_LIBRARY_INFER nvinfer
 find_library(TENSORRT_LIBRARY_INFER_PLUGIN nvinfer_plugin
   HINTS  ${TENSORRT_ROOT} ${TENSORRT_BUILD} ${CUDA_TOOLKIT_ROOT_DIR}
   PATH_SUFFIXES lib lib64 lib/x64)
-set(TENSORRT_LIBRARY ${TENSORRT_LIBRARY_INFER} ${TENSORRT_LIBRARY_INFER_PLUGIN})
+find_library(TENSORRT_LIBRARY_MYELIN myelin
+  HINTS  ${TENSORRT_ROOT} ${TENSORRT_BUILD} ${CUDA_TOOLKIT_ROOT_DIR}
+  PATH_SUFFIXES lib lib64 lib/x64)
+set(TENSORRT_LIBRARY ${TENSORRT_LIBRARY_INFER} ${TENSORRT_LIBRARY_INFER_PLUGIN} ${TENSORRT_LIBRARY_MYELIN})
 MESSAGE(STATUS "Find TensorRT libs at ${TENSORRT_LIBRARY}")
 find_package_handle_standard_args(
   TENSORRT DEFAULT_MSG TENSORRT_INCLUDE_DIR TENSORRT_LIBRARY)
@@ -266,7 +272,8 @@ target_link_libraries(getSupportedAPITest PUBLIC ${PROTOBUF_LIB} nvonnxparser_st
 # --------------------------------
 # Installation
 # --------------------------------
-install(TARGETS onnx2trt
+install(TARGETS
+                onnx2trt
                 nvonnxparser
                 nvonnxparser_static
         RUNTIME DESTINATION bin
