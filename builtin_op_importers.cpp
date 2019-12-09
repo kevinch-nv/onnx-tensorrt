@@ -124,9 +124,24 @@ DEFINE_BUILTIN_OP_IMPORTER(Acosh)
     return unaryHelper(ctx, inputs.at(0), nvinfer1::UnaryOperation::kACOSH);
 }
 
+DEFINE_BUILTIN_OP_IMPORTER(Add)
+{
+    return elementwiseHelper(ctx, node, inputs, nvinfer1::ElementWiseOperation::kSUM);
+}
+
 DEFINE_BUILTIN_OP_IMPORTER(And)
 {
     return elementwiseHelper(ctx, node, inputs, nvinfer1::ElementWiseOperation::kAND);
+}
+
+DEFINE_BUILTIN_OP_IMPORTER(ArgMax)
+{
+    return argMinMaxHelper(ctx, node, inputs, nvinfer1::TopKOperation::kMAX);
+}
+
+DEFINE_BUILTIN_OP_IMPORTER(ArgMin)
+{
+    return argMinMaxHelper(ctx, node, inputs, nvinfer1::TopKOperation::kMIN);
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(Asin)
@@ -147,21 +162,6 @@ DEFINE_BUILTIN_OP_IMPORTER(Atan)
 DEFINE_BUILTIN_OP_IMPORTER(Atanh)
 {
     return unaryHelper(ctx, inputs.at(0), nvinfer1::UnaryOperation::kATANH);
-}
-
-DEFINE_BUILTIN_OP_IMPORTER(Add)
-{
-    return elementwiseHelper(ctx, node, inputs, nvinfer1::ElementWiseOperation::kSUM);
-}
-
-DEFINE_BUILTIN_OP_IMPORTER(ArgMax)
-{
-    return argMinMaxHelper(ctx, node, inputs, nvinfer1::TopKOperation::kMAX);
-}
-
-DEFINE_BUILTIN_OP_IMPORTER(ArgMin)
-{
-    return argMinMaxHelper(ctx, node, inputs, nvinfer1::TopKOperation::kMIN);
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(AveragePool)
@@ -225,7 +225,6 @@ NodeImportResult batchnormFallback(
 
 DEFINE_BUILTIN_OP_IMPORTER(BatchNormalization)
 {
-    // Scale, bias, mean, and variance must be initializers
     auto scale_weights = inputs.at(1).weights();
     auto bias_weights = inputs.at(2).weights();
     auto mean_weights = inputs.at(3).weights();
@@ -2389,6 +2388,34 @@ DEFINE_BUILTIN_OP_IMPORTER(Relu)
     return activationHelper(ctx, node, inputs, nvinfer1::ActivationType::kRELU);
 }
 
+DEFINE_BUILTIN_OP_IMPORTER(Reshape)
+{
+    // "data : T
+    // An input tensor"
+    nvinfer1::ITensor& data = convertToTensor(inputs.at(0), ctx);
+
+    ShapeTensor shape;
+    if (ctx->getOpsetVersion() >= 5)
+    {
+        // "shape : tensor(int64)
+        // Specified shape for output."
+        shape = inputs.at(1);
+    }
+    else
+    {
+        // "Reshape-1
+        // ...
+        // shape : list of ints
+        // New shape"
+        OnnxAttrs attrs{node, ctx};
+        const auto shapeAsIntList = attrs.get<std::vector<int>>("shape");
+        shape = ShapeTensor(1, std::vector<int64_t>(shapeAsIntList.begin(), shapeAsIntList.end()));
+    }
+
+    nvinfer1::IShuffleLayer* layer = addShuffle(ctx, data, shape);
+    RETURN_FIRST_OUTPUT(layer);
+}
+
 DEFINE_BUILTIN_OP_IMPORTER(Resize)
 {
     nvinfer1::ITensor& input = convertToTensor(inputs.at(0), ctx);
@@ -2431,34 +2458,6 @@ DEFINE_BUILTIN_OP_IMPORTER(Resize)
     float const* scaleValues = static_cast<float const*>(scales_weights.values);
     layer->setResizeMode(resizeMode);
     layer->setScales(scaleValues, inputRank);
-    RETURN_FIRST_OUTPUT(layer);
-}
-
-DEFINE_BUILTIN_OP_IMPORTER(Reshape)
-{
-    // "data : T
-    // An input tensor"
-    nvinfer1::ITensor& data = convertToTensor(inputs.at(0), ctx);
-
-    ShapeTensor shape;
-    if (ctx->getOpsetVersion() >= 5)
-    {
-        // "shape : tensor(int64)
-        // Specified shape for output."
-        shape = inputs.at(1);
-    }
-    else
-    {
-        // "Reshape-1
-        // ...
-        // shape : list of ints
-        // New shape"
-        OnnxAttrs attrs{node, ctx};
-        const auto shapeAsIntList = attrs.get<std::vector<int>>("shape");
-        shape = ShapeTensor(1, std::vector<int64_t>(shapeAsIntList.begin(), shapeAsIntList.end()));
-    }
-
-    nvinfer1::IShuffleLayer* layer = addShuffle(ctx, data, shape);
     RETURN_FIRST_OUTPUT(layer);
 }
 
@@ -2935,14 +2934,14 @@ DEFINE_BUILTIN_OP_IMPORTER(Softmax)
     RETURN_FIRST_OUTPUT(reshapeLayer);
 }
 
-DEFINE_BUILTIN_OP_IMPORTER(Softsign)
-{
-    return activationHelper(ctx, node, inputs, nvinfer1::ActivationType::kSOFTSIGN);
-}
-
 DEFINE_BUILTIN_OP_IMPORTER(Softplus)
 {
     return activationHelper(ctx, node, inputs, nvinfer1::ActivationType::kSOFTPLUS);
+}
+
+DEFINE_BUILTIN_OP_IMPORTER(Softsign)
+{
+    return activationHelper(ctx, node, inputs, nvinfer1::ActivationType::kSOFTSIGN);
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(SpaceToDepth)
