@@ -18,39 +18,20 @@
  # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
  # DEALINGS IN THE SOFTWARE.
 
-cmake_minimum_required(VERSION 3.2 FATAL_ERROR)
-# The version of CMake which is not compatible with the old CUDA CMake commands.
-set(CMAKE_VERSION_THRESHOLD "3.10.0")
-
-if(${CMAKE_VERSION} VERSION_LESS ${CMAKE_VERSION_THRESHOLD})
-  project(onnx2trt LANGUAGES CXX C)
-else()
-  project(onnx2trt LANGUAGES CXX C CUDA)
-endif() 
-
-
-#
-# CUDA Configuration
-# This is no longer necessary, https://cmake.org/cmake/help/latest/module/FindCUDA.html
-# so we will do it only for older versions of cmake
-if(${CMAKE_VERSION} VERSION_LESS ${CMAKE_VERSION_THRESHOLD})
-  find_package(CUDA REQUIRED)
-endif()  
-
+cmake_minimum_required(VERSION 3.13)
+project(onnx2trt LANGUAGES CXX C)
 
 set(ONNX2TRT_ROOT ${PROJECT_SOURCE_DIR})
 # Set C++11 as standard for the whole project
 set(CMAKE_CXX_STANDARD  11)
 
 # Enable compiler warnings
-if ( CMAKE_COMPILER_IS_GNUCC )
+if (CMAKE_COMPILER_IS_GNUCC)
     set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wall -Wno-deprecated-declarations -Wno-unused-function")
 endif()
-if ( MSVC )
+if (MSVC)
     set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} /W4")
 endif()
-
-find_package(Threads REQUIRED)
 
 # Build the libraries with -fPIC
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -78,7 +59,18 @@ set(IMPORTER_SOURCES
   OnnxAttrs.cpp
 )
 
-set(ONNXIFI_SOURCES onnx_trt_backend.cpp)
+# Do not build ONNXIFI by default.
+if(BUILD_ONNXIFI)
+  if (NOT CUDA_TOOLKIT_ROOT_DIR)
+    set(CUDA_TOOLKIT_ROOT_DIR /usr/local/cuda)
+  endif()
+  message(debug "CUDA_TOOLKIT_ROOT_DIR: ${CUDA_TOOLKIT_ROOT_DIR}")
+  find_path(CUDA_INCLUDE_DIR cuda_runtime.h
+    HINTS ${CUDA_TOOLKIT_ROOT_DIR}
+    PATH_SUFFIXES include
+  )
+  set(ONNXIFI_SOURCES onnx_trt_backend.cpp)
+endif()
 
 set(EXECUTABLE_SOURCES
   main.cpp
@@ -88,7 +80,6 @@ set(API_TESTS_SOURCES
   getSupportedAPITest.cpp
   ModelImporter.cpp
 )
-
 
 set(HEADERS
   NvOnnxParser.h
@@ -107,91 +98,6 @@ if(NOT TARGET onnx_proto)
   endif()
   add_definitions("-DONNX_NAMESPACE=${ONNX_NAMESPACE}")
   add_subdirectory(third_party/onnx EXCLUDE_FROM_ALL)
-endif()
-
-# If GPU_ARCHS is user defined, build specifically for specified SM
-if (DEFINED GPU_ARCHS)
-  message(STATUS "GPU_ARCH defined as ${GPU_ARCHS}. Generating CUDA code for SM ${GPU_ARCHS}")
-  separate_arguments(GPU_ARCHS)
-# Else list out default SMs to build for.
-else()
-  message(STATUS "GPU_ARCH is not defined. Generating CUDA code for default SMs.")
-  list(APPEND GPU_ARCHS
-      35
-      53
-      61
-      70
-      )
-  # Add SM 75 for CUDA versions >= 10.0
-  if (NOT ("${CUDA_VERSION}" VERSION_LESS "10.0"))
-    list(APPEND GPU_ARCHS
-      75)
-  endif()
-endif()
-
-set(CUDA_VERBOSE_BUILD ON)
-
-# Generate SASS for each architecture
-foreach(arch ${GPU_ARCHS})
-    set(GENCODES "${GENCODES} -gencode arch=compute_${arch},code=sm_${arch}")
-endforeach()
-# Generate PTX for the last architecture
-list(GET GPU_ARCHS -1 LATEST_GPU_ARCH)
-set(GENCODES "${GENCODES} -gencode arch=compute_${LATEST_GPU_ARCH},code=compute_${LATEST_GPU_ARCH}")
-
-if(${CMAKE_VERSION} VERSION_LESS ${CMAKE_VERSION_THRESHOLD})
-  if(NOT "${CUDA_NVCC_FLAGS}" MATCHES "-cudart" )
-    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -cudart static")
-  endif()
-  set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} \
-    -lineinfo \
-    -g \
-    --expt-extended-lambda \
-    ${GENCODES} \
-    ")
-  
-  if((NOT "${CUDA_NVCC_FLAGS}" MATCHES "-std=c\\+\\+") AND (NOT "${CUDA_NVCC_FLAGS}" MATCHES "-std=gnu\\+\\+"))
-    list(APPEND CUDA_NVCC_FLAGS -std=c++11)
-  endif()
-
-else()
-  if(NOT "${CMAKE_CUDA_FLAGS}" MATCHES "-cudart" )
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -cudart static")
-  endif()
-  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} \
-    -lineinfo \
-    -g \
-    --expt-extended-lambda \
-    ${GENCODES} \
-    ")
-
-  if((NOT CXX_VERSION_DEFINED) AND (NOT "${CMAKE_CUDA_FLAGS}" MATCHES "-std=c\\+\\+") AND (NOT "${CMAKE_CUDA_FLAGS}" MATCHES "-std=gnu\\+\\+"))
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -std=c++11")
-  endif()
-
-endif()  
-  
-
-
-# Specify the cuda host compiler to use the same compiler as cmake.
-set(CUDA_HOST_COMPILER ${CMAKE_CXX_COMPILER})
-
-# CUDNN
-set(CUDNN_ROOT_DIR "" CACHE PATH "Folder contains NVIDIA cuDNN")
-find_path(CUDNN_INCLUDE_DIR cudnn.h
-    HINTS ${CUDNN_ROOT_DIR} ${CUDA_TOOLKIT_ROOT_DIR}
-    PATH_SUFFIXES cuda/include include)
-find_library(CUDNN_LIBRARY cudnn
-    HINTS ${CUDNN_ROOT_DIR} ${CUDA_TOOLKIT_ROOT_DIR}
-    PATH_SUFFIXES lib lib64 cuda/lib cuda/lib64 lib/x64)
-find_package_handle_standard_args(
-    CUDNN DEFAULT_MSG CUDNN_INCLUDE_DIR CUDNN_LIBRARY)
-
-if(NOT CUDNN_FOUND)
-  message(WARNING
-      "Cudnn cannot be found. TensorRT depends explicitly "
-      "on cudnn so you should consider installing it.")
-  return()
 endif()
 
 # TensorRT
@@ -216,23 +122,12 @@ if(NOT TENSORRT_FOUND)
   message(ERROR "Cannot find TensorRT library.")
 endif()
 
-
-# --------------------------------
-# Plugin library
-# --------------------------------
-list(APPEND CUDA_NVCC_FLAGS "-Xcompiler -fPIC --expt-extended-lambda")
-if(${CMAKE_VERSION} VERSION_LESS ${CMAKE_VERSION_THRESHOLD})
-  CUDA_INCLUDE_DIRECTORIES(${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})
-else()
-  include_directories(${CUDNN_INCLUDE_DIR} ${TENSORRT_INCLUDE_DIR})
-endif()
-
 # --------------------------------
 # Importer library
 # --------------------------------
 add_library(nvonnxparser SHARED ${IMPORTER_SOURCES})
-target_include_directories(nvonnxparser PUBLIC ${CUDA_INCLUDE_DIRS} ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${CUDNN_INCLUDE_DIR})
-target_link_libraries(nvonnxparser PUBLIC onnx_proto ${PROTOBUF_LIBRARY} ${CUDNN_LIBRARY} ${TENSORRT_LIBRARY})
+target_include_directories(nvonnxparser PUBLIC ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR})
+target_link_libraries(nvonnxparser PUBLIC onnx_proto ${PROTOBUF_LIBRARY} ${TENSORRT_LIBRARY})
 set_target_properties(nvonnxparser PROPERTIES
   VERSION   ${ONNX2TRT_MAJOR}.${ONNX2TRT_MINOR}.${ONNX2TRT_PATCH}
   SOVERSION ${ONNX2TRT_MAJOR}
@@ -240,34 +135,31 @@ set_target_properties(nvonnxparser PROPERTIES
   LINK_FLAGS "-Wl,--version-script=${PARSER_LINKER_SCRIPT}"
 )
 add_library(nvonnxparser_static STATIC ${IMPORTER_SOURCES})
-target_include_directories(nvonnxparser_static PUBLIC ${CUDA_INCLUDE_DIRS} ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${CUDNN_INCLUDE_DIR})
-target_link_libraries(nvonnxparser_static PUBLIC onnx_proto ${PROTOBUF_LIBRARY} ${CUDNN_LIBRARY} ${TENSORRT_LIBRARY})
+target_include_directories(nvonnxparser_static PUBLIC ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR})
+target_link_libraries(nvonnxparser_static PUBLIC onnx_proto ${PROTOBUF_LIBRARY} ${TENSORRT_LIBRARY})
 
 # --------------------------------
 # Onnxifi library
 # --------------------------------
-add_library(trt_onnxify SHARED ${ONNXIFI_SOURCES})
-target_include_directories(trt_onnxify PUBLIC ${CUDA_INCLUDE_DIRS} ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${CUDNN_INCLUDE_DIR})
-target_link_libraries(trt_onnxify PUBLIC nvonnxparser_static ${CUDA_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
+if(BUILD_ONNXIFI)
+  add_library(trt_onnxify SHARED ${ONNXIFI_SOURCES})
+  target_include_directories(trt_onnxify PUBLIC ${CUDA_INCLUDE_DIR} ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR})
+  target_link_libraries(trt_onnxify PUBLIC nvonnxparser_static ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
+endif()
 
 # --------------------------------
 # Converter executable
 # --------------------------------
-
 add_executable(onnx2trt ${EXECUTABLE_SOURCES})
-target_include_directories(onnx2trt PUBLIC ${ONNX_INCLUDE_DIRS} ${CUDNN_INCLUDE_DIR})
-
-target_link_libraries(onnx2trt PUBLIC ${PROTOBUF_LIB} nvonnxparser_static ${CUDA_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
+target_include_directories(onnx2trt PUBLIC ${ONNX_INCLUDE_DIRS})
+target_link_libraries(onnx2trt PUBLIC ${PROTOBUF_LIB} nvonnxparser_static ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS}) #${CUDA_LIBRARIES} 
 
 # --------------------------------
 # API Tests
 # --------------------------------
-
 add_executable(getSupportedAPITest ${API_TESTS_SOURCES})
 target_include_directories(getSupportedAPITest PUBLIC ${ONNX_INCLUDE_DIRS} ${CUDNN_INCLUDE_DIR})
-
-target_link_libraries(getSupportedAPITest PUBLIC ${PROTOBUF_LIB} nvonnxparser_static ${CUDA_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS})
-
+target_link_libraries(getSupportedAPITest PUBLIC ${PROTOBUF_LIB} nvonnxparser_static ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS}) #${CUDA_LIBRARIES} 
 
 # --------------------------------
 # Installation
