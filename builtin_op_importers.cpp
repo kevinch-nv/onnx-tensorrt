@@ -325,11 +325,6 @@ DEFINE_BUILTIN_OP_IMPORTER(Ceil)
 
 DEFINE_BUILTIN_OP_IMPORTER(Clip)
 {
-    nvinfer1::ITensor* input = &convertToTensor(inputs.at(0), ctx);
-    const nvinfer1::DataType originalType = input->getType();
-    ASSERT(originalType == nvinfer1::DataType::kFLOAT && "Clip can only accept activation data type",
-        ErrorCode::kINVALID_NODE);
-
     OnnxAttrs attrs(node, ctx);
     // beta is the upper bound
     float alpha = std::numeric_limits<float>::lowest();

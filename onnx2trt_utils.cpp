@@ -32,6 +32,8 @@ NodeImportResult activationHelper(IImporterContext* ctx, const ::ONNX_NAMESPACE:
     std::vector<TensorOrWeights>& inputs, nvinfer1::ActivationType op, float* alpha, float* beta)
 {
     nvinfer1::ITensor& input = convertToTensor(inputs.at(0), ctx);
+    ASSERT(input.getType() != nvinfer1::DataType::kINT32 && input.getType() != nvinfer1::DataType::kBOOL
+        && "TensorRT does not support activations on INT32 or BOOL inputs!", ErrorCode::kUNSUPPORTED_NODE);
     nvinfer1::IActivationLayer* layer = ctx->network()->addActivation(input, op);
     if (alpha)
     {
