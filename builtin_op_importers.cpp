@@ -2292,6 +2292,8 @@ DEFINE_BUILTIN_OP_IMPORTER(Range)
     {
         layer->setAlpha(start.values[0]);
         layer->setBeta(delta.values[0]);
+        // Set layer output type to INT32 for statically-known ranges.
+        layer->setOutputType(0, nvinfer1::DataType::kINT32);
     }
     else
     {
