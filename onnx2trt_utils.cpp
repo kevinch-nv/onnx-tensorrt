@@ -308,94 +308,200 @@ bool convertOnnxPadding(const std::vector<int64_t>& onnxPadding, nvinfer1::Dims2
     return true;
 }
 
+void parseExternalWeights(std::string file, std::string path, int offset, int length,
+    void** data, size_t* size)
+{
+    // The weight paths in the ONNX model are relative paths, so do some path hacking here.
+#ifdef _MSC_VER
+    size_t found = path.rfind("\\");
+#else
+    size_t found = path.rfind("/");
+#endif
+    if (found != std::string::npos)
+    {
+        path.replace(found+1, path.size() - (found + 1), file);
+    }
+    std::ifstream relPathFile(path, std::ios::binary | std::ios::ate);
+    std::cout << "Importing: " << path << std::endl;
+
+    if (!relPathFile)
+    {
+        std::cerr << "FAILED TO OPEN FILE FROM RELATIVE PATH... LOL" << std::endl;
+        return;
+    }
+    std::streamsize fileSize = relPathFile.tellg();
+    relPathFile.seekg(offset, std::ios::beg);
+    int weightsBufSize = length == 0 ? fileSize : length;
+    std::vector<char> weightsBuf(weightsBufSize);
+    //LOG_VERBOSE("Reading weights from external file: " + file);
+    std::cout << "Reading weights from external file: " << file << std::endl;
+    if (!relPathFile.read(weightsBuf.data(), weightsBuf.size()))
+    {
+        std::cerr << "ERROR: Failed to read from file " << file << std::endl;
+        return;
+    }
+    std::cout << "Done reading weights! Weights have size: " << weightsBuf.size() << std::endl;
+
+    std::cout << "updating data ptr and nbytes" << std::endl;
+    *data = static_cast<void*>(weightsBuf.data());
+    *size = weightsBuf.size();
+}
+
 bool convertOnnxWeights(
     const ::ONNX_NAMESPACE::TensorProto& onnxTensor, onnx2trt::ShapedWeights* weights, IImporterContext* ctx)
 {
-    // Pass through for optional (empty) initializers for unused attributes.
-    if (isOnnxTensorEmpty(onnxTensor))
-    {
-        auto empty = onnx2trt::ShapedWeights::empty(::ONNX_NAMESPACE::TensorProto::FLOAT);
-        *weights = empty;
-        return true;
-    }
-
-    nvinfer1::Dims shape;
-    shape.nbDims = onnxTensor.dims().size();
-    std::copy(onnxTensor.dims().begin(), onnxTensor.dims().end(), shape.d);
-
-    auto onnxDtype = onnxTensor.data_type();
-
     void* dataPtr{nullptr}; // TODO: See if can make const*
     size_t nbytes{0};
-    if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT64)
-    {
-        if (onnxTensor.raw_data().size() > 0)
-        {
-            dataPtr = convertINT64(reinterpret_cast<const int64_t*>(onnxTensor.raw_data().data()), shape, ctx);
-            nbytes = onnxTensor.raw_data().size() / 2;
-        }
-        else if (onnxTensor.int64_data().size() > 0)
-        {
-            dataPtr = convertINT64(onnxTensor.int64_data().data(), shape, ctx);
-            nbytes = onnxTensor.int64_data().size() * sizeof(int32_t);
-        }
-        onnxDtype = ::ONNX_NAMESPACE::TensorProto::INT32;
-    }
+    nvinfer1::Dims shape;
+    auto onnxDtype = onnxTensor.data_type();
 
-    // Check for supported types that can be found in the int32_data field in the TensorProto
-    // https://github.com/onnx/onnx/blob/master/onnx/onnx.proto#L382-L387
-    else if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT32 || onnxDtype == ::ONNX_NAMESPACE::TensorProto::FLOAT16
-        || onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT8 || onnxDtype == ::ONNX_NAMESPACE::TensorProto::BOOL)
+    // ONNX weight values can be stored in either the TensorProto itself, or in an external file in the case
+    // of large models. Check for this here.
+    auto dataLocation = onnxTensor.data_location();
+
+    // Weights are located in an external file
+    if (dataLocation == 1)
     {
-        if (onnxTensor.raw_data().size() > 0)
+        std::string location{""};
+        int offset{0};
+        int length{0};
+
+        for (auto StringString : onnxTensor.external_data())
         {
-            dataPtr = (void*)(onnxTensor.raw_data().data());
-            nbytes = onnxTensor.raw_data().size();
-        }
-        else
-        {
-            switch (onnxDtype)
+            auto keyName = StringString.key();
+            if (keyName == "location")
             {
-                case ::ONNX_NAMESPACE::TensorProto::INT32:
-                    dataPtr = (void*) (onnxTensor.int32_data().data());
-                    break;
-                // According to the ONNX proto spec, fp16 values are bit-wise converted to uint16_t when serialied into the protobuf.
-                case ::ONNX_NAMESPACE::TensorProto::FLOAT16:
-                    dataPtr = convertINT32Data<uint16_t>(onnxTensor.int32_data().data(), shape, onnxDtype, ctx);
-                    break;
-                case ::ONNX_NAMESPACE::TensorProto::INT8:
-                    dataPtr = convertINT32Data<int8_t>(onnxTensor.int32_data().data(), shape, onnxDtype, ctx);
-                    break;
-                case ::ONNX_NAMESPACE::TensorProto::BOOL:
-                    dataPtr = convertINT32Data<uint8_t>(onnxTensor.int32_data().data(), shape, onnxDtype, ctx);
-                    break;
+                location = StringString.value();
+                std::cout << "LOCATION: " << location << std::endl;
             }
-            nbytes = onnxTensor.int32_data().size() * getDtypeSize(onnxDtype);
+            else if (keyName == "offset")
+            {
+                offset = std::atoi(StringString.value().c_str());
+                std::cout << "OFFSET: " << offset << std::endl;
+            }
+            else if (keyName == "length")
+            {
+                length = std::atoi(StringString.value().c_str());
+                std::cout << "LENGTH: " << length << std::endl;
+            }
+            else if (keyName == "checksum")
+            {
+                std::cout << "NO POINT" << std::endl;
+            }
+            else 
+            {
+                LOG_ERROR("Key value of: " << keyName << " was not expected!");
+                return false;
+            }
         }
-    }
-    else if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::FLOAT)
-    {
-        if (onnxTensor.raw_data().size() > 0)
+        // Will update dataPtr and nbytes from the external file by reference.
+        parseExternalWeights(location, ctx->onnxFileLocation(), offset, length, &dataPtr, &nbytes);
+        // Update the shape.
+        shape.nbDims = onnxTensor.dims().size();
+        std::copy(onnxTensor.dims().begin(), onnxTensor.dims().end(), shape.d);
+        // Note for INT64 weights, we need to downcast them to INT32.
+        if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT64)
         {
-            dataPtr = (void*)(onnxTensor.raw_data().data());
-            nbytes = onnxTensor.raw_data().size();
+            dataPtr = convertINT64(reinterpret_cast<const int64_t*>(dataPtr), shape, ctx);
+            nbytes = nbytes / 2;
+            onnxDtype = ::ONNX_NAMESPACE::TensorProto::INT32;
+            std::cout << static_cast<int32_t*>(dataPtr)[0] << " " << static_cast<int32_t*>(dataPtr)[1] << " " << static_cast<int32_t*>(dataPtr)[2] << std::endl;
         }
         else
         {
-            dataPtr = (void*)(onnxTensor.float_data().data());
-            nbytes = onnxTensor.float_data().size() * sizeof(float);
+            std::cout << static_cast<float*>(dataPtr)[0] << " " << static_cast<float*>(dataPtr)[1] << " " << static_cast<float*>(dataPtr)[2] << std::endl;
+
         }
     }
     else
     {
-        LOG_ERROR("Found unsupported datatype (" << onnxDtype << ") when importing initializer: " << onnxTensor.name());
-        return false;
-    }
+        // Pass through for optional (empty) initializers for unused attributes.
+        if (isOnnxTensorEmpty(onnxTensor) && dataLocation == 0)
+        {
+            auto empty = onnx2trt::ShapedWeights::empty(::ONNX_NAMESPACE::TensorProto::FLOAT);
+            *weights = empty;
+            return true;
+        }
+        // Import initializer from TensorProto
+        else
+        {
+            shape.nbDims = onnxTensor.dims().size();
+            std::copy(onnxTensor.dims().begin(), onnxTensor.dims().end(), shape.d);
 
+            if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT64)
+            {
+                if (onnxTensor.raw_data().size() > 0)
+                {
+                    dataPtr = convertINT64(reinterpret_cast<const int64_t*>(onnxTensor.raw_data().data()), shape, ctx);
+                    nbytes = onnxTensor.raw_data().size() / 2;
+                }
+                else if (onnxTensor.int64_data().size() > 0)
+                {
+                    dataPtr = convertINT64(onnxTensor.int64_data().data(), shape, ctx);
+                    nbytes = onnxTensor.int64_data().size() * sizeof(int32_t);
+                }
+                onnxDtype = ::ONNX_NAMESPACE::TensorProto::INT32;
+            }
+
+            // Check for supported types that can be found in the int32_data field in the TensorProto
+            // https://github.com/onnx/onnx/blob/master/onnx/onnx.proto#L382-L387
+            else if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT32 || onnxDtype == ::ONNX_NAMESPACE::TensorProto::FLOAT16
+                || onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT8 || onnxDtype == ::ONNX_NAMESPACE::TensorProto::BOOL)
+            {
+                if (onnxTensor.raw_data().size() > 0)
+                {
+                    dataPtr = (void*)(onnxTensor.raw_data().data());
+                    nbytes = onnxTensor.raw_data().size();
+                }
+                else
+                {
+                    switch (onnxDtype)
+                    {
+                        case ::ONNX_NAMESPACE::TensorProto::INT32:
+                            dataPtr = (void*) (onnxTensor.int32_data().data());
+                            break;
+                        // According to the ONNX proto spec, fp16 values are bit-wise converted to uint16_t when serialied into the protobuf.
+                        case ::ONNX_NAMESPACE::TensorProto::FLOAT16:
+                            dataPtr = convertINT32Data<uint16_t>(onnxTensor.int32_data().data(), shape, onnxDtype, ctx);
+                            break;
+                        case ::ONNX_NAMESPACE::TensorProto::INT8:
+                            dataPtr = convertINT32Data<int8_t>(onnxTensor.int32_data().data(), shape, onnxDtype, ctx);
+                            break;
+                        case ::ONNX_NAMESPACE::TensorProto::BOOL:
+                            dataPtr = convertINT32Data<uint8_t>(onnxTensor.int32_data().data(), shape, onnxDtype, ctx);
+                            break;
+                    }
+                    nbytes = onnxTensor.int32_data().size() * getDtypeSize(onnxDtype);
+                }
+            }
+            else if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::FLOAT)
+            {
+                if (onnxTensor.raw_data().size() > 0)
+                {
+                    dataPtr = (void*)(onnxTensor.raw_data().data());
+                    nbytes = onnxTensor.raw_data().size();
+                }
+                else
+                {
+                    dataPtr = (void*)(onnxTensor.float_data().data());
+                    nbytes = onnxTensor.float_data().size() * sizeof(float);
+                }
+            }
+            else
+            {
+                LOG_ERROR("Found unsupported datatype (" << onnxDtype << ") when importing initializer: " << onnxTensor.name());
+                return false;
+            }
+        }
+    }
+    
     onnx2trt::ShapedWeights trt_weights(onnxDtype, dataPtr, shape);
     // Sanity check that weights were converted properly
     if (trt_weights.size_bytes() != nbytes)
     {
+        std::cout << trt_weights.count() << std::endl;
+        std::cout << trt_weights.type << std::endl;
+        std::cout << trt_weights.shape << std::endl;
         LOG_ERROR("Size mismatch when importing initializer: " << onnxTensor.name() << ". Expected size: " << nbytes << " , actual size: " << trt_weights.size_bytes());
         return false;
     }

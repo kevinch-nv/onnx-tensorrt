@@ -48,6 +48,7 @@ class ImporterContext final : public IImporterContext
         mTensorNameCounts; // Keep track of how many times a tensor name shows up, to avoid duplicate naming in TRT.
     StringMap<size_t>
         mLayerNameCounts; // Keep track of how many times a tensor name shows up, to avoid duplicate naming in TRT.
+    std::string mOnnxFileLocation; // Keep track of the directory of the parsed ONNX file
 public:
     ImporterContext(nvinfer1::INetworkDefinition* network, nvinfer1::ILogger* logger)
         : _network(network)
@@ -78,7 +79,14 @@ public:
     {
         return mLayerPrecisions;
     }
-
+    virtual void setOnnxFileLocation(std::string location)
+    {
+        mOnnxFileLocation = location;
+    }
+    virtual std::string onnxFileLocation() override
+    {
+        return mOnnxFileLocation;
+    }
     // This actually handles weights as well, but is named this way to be consistent with the tensors()
     virtual void registerTensor(TensorOrWeights tensor, const std::string& basename) override
     {

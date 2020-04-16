@@ -64,6 +64,7 @@ public:
     virtual ShapedWeights createTempWeights(ShapedWeights::DataType type, nvinfer1::Dims shape) = 0;
     virtual int64_t getOpsetVersion(const char* domain = "") const = 0;
     virtual nvinfer1::ILogger& logger() = 0;
+    virtual std::string onnxFileLocation() = 0;
 
 protected:
     virtual ~IImporterContext()

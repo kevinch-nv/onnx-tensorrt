@@ -401,7 +401,11 @@ DEFINE_BUILTIN_OP_IMPORTER(Constant)
         auto* layer = ctx->network()->addConstant(weights.shape, weights);
         RETURN_FIRST_OUTPUT(layer);
     }
-    return {{attrs.get<ShapedWeights>("value")}};
+    //return {{attrs.get<ShapedWeights>("value")}};
+    auto weights = attrs.get<ShapedWeights>("value");
+    auto* layer = ctx->network()->addConstant(weights.shape, weights);
+    RETURN_FIRST_OUTPUT(layer);
+
 }
 
 DEFINE_BUILTIN_OP_IMPORTER(ConstantOfShape)

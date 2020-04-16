@@ -85,6 +85,7 @@ Status parseGraph(
     IImporterContext* ctx, const ::ONNX_NAMESPACE::GraphProto& graph, bool deserializingINetwork, int* currentNode)
 {
     // Import initializers.
+    std::cout << ctx->onnxFileLocation() << std::endl;
     for (const ::ONNX_NAMESPACE::TensorProto& initializer : graph.initializer())
     {
         LOG_VERBOSE("Importing initializer: " << initializer.name());
@@ -611,6 +612,9 @@ bool ModelImporter::parseFromFile(const char* onnxModelFile, int verbosity)
         cerr << "Failed to parse ONNX model from file" << onnxModelFile << endl;
         return EXIT_FAILURE;
     }
+    // Keep track of the absolute path to the ONNX file.
+    _importer_ctx.setOnnxFileLocation(onnxModelFile);
+    std::cout << "set file location to " << onnxModelFile << _importer_ctx.onnxFileLocation() << std::endl;
 
     if (verbosity >= (int) nvinfer1::ILogger::Severity::kWARNING)
     {
