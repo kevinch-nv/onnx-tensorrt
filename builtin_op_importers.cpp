@@ -3638,6 +3638,8 @@ std::vector<nvinfer1::PluginField> loadFields(string_map<std::vector<uint8_t>>& 
             case ::ONNX_NAMESPACE::AttributeProto::GRAPH:
             case ::ONNX_NAMESPACE::AttributeProto::TENSORS:
             case ::ONNX_NAMESPACE::AttributeProto::GRAPHS:
+            case ::ONNX_NAMESPACE::AttributeProto::SPARSE_TENSOR:
+            case ::ONNX_NAMESPACE::AttributeProto::SPARSE_TENSORS:
                 MAKE_ERROR(
                     "Attributes of type: " + ::ONNX_NAMESPACE::AttributeProto::AttributeType_Name(attrs.type(fieldName))
                         + " are unsupported",
