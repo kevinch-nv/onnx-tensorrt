@@ -331,12 +331,35 @@ bool ModelImporter::supportsModel(
         }
     }
     auto* ctx = &_importer_ctx;
+
     auto checkForInput = [&input_node, &ctx](::ONNX_NAMESPACE::NodeProto const& node) {
         for (auto input : node.input())
         {
             if (input_node == input || ctx->loopTensors()[input_node] == input)
             {
                 return true;
+            }
+        }
+        return false;
+    };
+
+    auto checkForShapeTensors = [&ctx](::ONNX_NAMESPACE::NodeProto const& node){
+        for (int i = 0; i < ctx->network()->getNbInputs(); i++)
+        {
+            auto input = ctx->network()->getInput(i);
+            if (input->isShapeTensor())
+            {
+                if (input->getType() == nvinfer1::DataType::kFLOAT)
+                {
+                    auto name = input->getName();
+                    for (auto input : node.input())
+                    {
+                        if (input == name)
+                        {
+                            return true;
+                        }
+                    }
+                }
             }
         }
         return false;
@@ -361,10 +384,11 @@ bool ModelImporter::supportsModel(
         //     4. Any shape tensor output is from a supported layer.
         bool registered = supportsOperator(node.op_type().c_str());
         bool containsInput = (input_node.empty()) ? false : checkForInput(node);
+        bool containsShapeInput = checkForShapeTensors(node);
         bool containsIndex = node_idx == error_node;
-        auto tensorName = node.output(0);
+        auto tensorName = node.name();
         bool supportedShapeTensor = ctx->unsupportedShapeTensors().count(tensorName) == 0 ? true : false;
-        if (registered && !containsInput && !containsIndex && supportedShapeTensor)
+        if (registered && !containsInput && !containsShapeInput && !containsIndex && supportedShapeTensor)
         {
             if (newSubGraph)
             {
@@ -458,9 +482,9 @@ void removeShapeTensorCasts(IImporterContext* ctx)
             auto reduceOp = type == nvinfer1::LayerType::kREDUCE ? (static_cast<nvinfer1::IReduceLayer*>(layer))->getOperation() : nvinfer1::ReduceOperation::kSUM;
             if (!supportsShapeTensor(type, elementwiseOp, reduceOp))
             {
-                auto name = layer->getOutput(0)->getName();
+                auto name = layer->getName();
                 ctx->unsupportedShapeTensors().insert(name);
-                LOG_ERROR("Found " << name << " as a shape tensor output from a layer that does not support it!");
+                LOG_ERROR("Found unsupported shape-tensor producing layer:" << name);
             }
         }
     }
