@@ -32,7 +32,8 @@
 namespace onnx2trt
 {
 
-Status parseGraph(IImporterContext* ctx, const ::ONNX_NAMESPACE::GraphProto& graph, bool deserializingINetwork = false);
+Status parseGraph(IImporterContext* ctx, const ::ONNX_NAMESPACE::GraphProto& graph, bool deserializingINetwork = false,
+    int* currentNode = nullptr);
 
 class ModelImporter : public nvonnxparser::IParser
 {

@@ -82,7 +82,7 @@ Status setStringMap(
     return Status::success();
 }
 
-Status parseGraph(IImporterContext* ctx, const ::ONNX_NAMESPACE::GraphProto& graph, bool deserializingINetwork)
+Status parseGraph(IImporterContext* ctx, const ::ONNX_NAMESPACE::GraphProto& graph, bool deserializingINetwork, int* currentNode)
 {
     // Import initializers.
     for (const ::ONNX_NAMESPACE::TensorProto& initializer : graph.initializer())
@@ -99,6 +99,10 @@ Status parseGraph(IImporterContext* ctx, const ::ONNX_NAMESPACE::GraphProto& gra
     const string_map<NodeImporter>& opImporters = getBuiltinOpImporterMap();
     for (const auto& nodeIndex : topoOrder)
     {
+        if (currentNode)
+        {
+            *currentNode = nodeIndex;
+        }
         const auto& node = graph.node(nodeIndex);
         LOG_VERBOSE("Parsing node: " << node.name() << " [" << node.op_type() << "]");
 
@@ -403,6 +407,7 @@ bool ModelImporter::supportsModel(
         }
         else
         {
+            std::cout << "Found unsupported node: " << tensorName << std::endl;
             // This is not a supported node, reset newSubGraph
             newSubGraph = true;
             allSupported = false;
@@ -518,10 +523,10 @@ Status ModelImporter::importModel(
         _importer_ctx.registerTensor(TensorOrWeights{}, output.name());
     }
 
-    TRT_CHECK(importInputs(&_importer_ctx, graph, &_importer_ctx.tensors(), weight_count, weight_descriptors));
-    TRT_CHECK(parseGraph(&_importer_ctx, graph, model.producer_name() == "TensorRT"));
-
     _current_node = -1;
+    TRT_CHECK(importInputs(&_importer_ctx, graph, &_importer_ctx.tensors(), weight_count, weight_descriptors));
+    TRT_CHECK(parseGraph(&_importer_ctx, graph, model.producer_name() == "TensorRT", &_current_node));
+
     // Mark outputs defined in the ONNX model (unless tensors are user-requested)
     for (::ONNX_NAMESPACE::ValueInfoProto const& output : graph.output())
     {
