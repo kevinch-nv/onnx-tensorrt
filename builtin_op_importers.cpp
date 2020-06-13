@@ -1686,7 +1686,7 @@ DEFINE_BUILTIN_OP_IMPORTER(Loop)
         ASSERT(tripLimit, ErrorCode::kINVALID_NODE);
         ctx->loopTensors()[body.input(0).name()] = node.input(0);
         loop->addTripLimit(*tripLimit, nvinfer1::TripLimit::kCOUNT);
-        ctx->registerTensor(tripLimit, body.input(0).name());
+        //ctx->registerTensor(tripLimit, body.input(0).name());
     }
     if (inputs[1])
     {
