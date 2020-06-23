@@ -353,7 +353,7 @@ bool ModelImporter::supportsModel(
             auto input = ctx->network()->getInput(i);
             if (input->isShapeTensor())
             {
-                if (input->getType() == nvinfer1::DataType::kFLOAT)
+                if (input->getType() == nvinfer1::DataType::kFLOAT || node.op_type() == "Loop" || node.op_type() == "Scan")
                 {
                     auto name = input->getName();
                     for (auto input : node.input())
@@ -382,17 +382,18 @@ bool ModelImporter::supportsModel(
     {
         ::ONNX_NAMESPACE::NodeProto const& node = model.graph().node(node_idx);
         // Add the node to the subgraph if:
-        //     1. Importer function is regestiered for the operator type
+        //     1. There is an importer function registered for the operator type
         //     2. It is not directly connected to an unsupported input
-        //     3. Parsing did not hit an error on the node
-        //     4. Any shape tensor output is from a supported layer.
+        //     3. It is not directly connected to an unsupported shape tensor input
+        //     4. It did not illegally produce a shape tensor output
+        //     5. It was sucessfully parsed
         bool registered = supportsOperator(node.op_type().c_str());
         bool containsInput = (input_node.empty()) ? false : checkForInput(node);
         bool containsShapeInput = checkForShapeTensors(node);
-        bool containsIndex = node_idx == error_node;
         auto tensorName = node.name();
         bool supportedShapeTensor = ctx->unsupportedShapeTensors().count(tensorName) == 0 ? true : false;
-        if (registered && !containsInput && !containsShapeInput && !containsIndex && supportedShapeTensor)
+        bool containsIndex = node_idx == error_node;
+        if (registered && !containsInput && !containsShapeInput && supportedShapeTensor && !containsIndex)
         {
             if (newSubGraph)
             {
