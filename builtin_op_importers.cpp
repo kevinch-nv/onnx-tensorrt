@@ -1171,9 +1171,9 @@ DEFINE_BUILTIN_OP_IMPORTER(Greater)
 }
 
 // singlePassShape is the shape of the output from a single pass.
-nvinfer1::ITensor* concatenateRNNOutputs(IImporterContext* ctx, nvinfer1::ILoop* loop,
+nvinfer1::ITensor* concatenateRNNOutputs(IImporterContext* ctx, const ::ONNX_NAMESPACE::NodeProto& node, nvinfer1::ILoop* loop,
     nvinfer1::ITensor* singlePassShape, nvinfer1::ITensor* sequenceLength, nvinfer1::ITensor* concatenatedOutput,
-    int numDirections)
+    int numDirections, std::vector<TensorOrWeights>& inputs, bool reverse = false)
 {
     nvinfer1::ITensor* yOutput{nullptr};
     if (numDirections == 2)
@@ -1198,11 +1198,20 @@ nvinfer1::ITensor* concatenateRNNOutputs(IImporterContext* ctx, nvinfer1::ILoop*
         HtBackwardLayer->setInput(1, *reverseStart);
         HtBackwardLayer->setInput(2, *singlePassShape);
 
+        auto forwardHt = HtForwardLayer->getOutput(0);
+        auto backwardHt = HtBackwardLayer->getOutput(0);
+        if (inputs.size() > 4 && inputs.at(4))
+        {
+            nvinfer1::ITensor* seqLens = &convertToTensor(inputs.at(4), ctx);
+            forwardHt = clearMissingSequenceElements(ctx, node, loop, seqLens, forwardHt, sequenceLength);
+            backwardHt = clearMissingSequenceElements(ctx, node, loop, seqLens, backwardHt, sequenceLength, /*reverse=*/ true);
+        }
+
         nvinfer1::ILoopOutputLayer* forwardOutput
-            = loop->addLoopOutput(*HtForwardLayer->getOutput(0), nvinfer1::LoopOutput::kCONCATENATE, 0);
+            = loop->addLoopOutput(*forwardHt, nvinfer1::LoopOutput::kCONCATENATE, 0);
         forwardOutput->setInput(1, *sequenceLength);
         nvinfer1::ILoopOutputLayer* reverseOutput
-            = loop->addLoopOutput(*HtBackwardLayer->getOutput(0), nvinfer1::LoopOutput::kREVERSE, 0);
+            = loop->addLoopOutput(*backwardHt, nvinfer1::LoopOutput::kREVERSE, 0);
         reverseOutput->setInput(1, *sequenceLength);
 
         std::array<nvinfer1::ITensor*, 2> passes{{forwardOutput->getOutput(0), reverseOutput->getOutput(0)}};
@@ -1212,8 +1221,13 @@ nvinfer1::ITensor* concatenateRNNOutputs(IImporterContext* ctx, nvinfer1::ILoop*
     }
     else
     {
+        if (inputs.size() > 4 && inputs.at(4))
+        {
+            nvinfer1::ITensor* seqLens = &convertToTensor(inputs.at(4), ctx);
+            concatenatedOutput = clearMissingSequenceElements(ctx, node, loop, seqLens, concatenatedOutput, sequenceLength, reverse);
+        }
         nvinfer1::ILoopOutputLayer* scanOut
-            = loop->addLoopOutput(*concatenatedOutput, nvinfer1::LoopOutput::kCONCATENATE, 0);
+            = loop->addLoopOutput(*concatenatedOutput, (reverse ? nvinfer1::LoopOutput::kREVERSE : nvinfer1::LoopOutput::kCONCATENATE), 0);
         scanOut->setInput(1, *sequenceLength);
         yOutput = scanOut->getOutput(0);
     }
@@ -1262,9 +1276,12 @@ DEFINE_BUILTIN_OP_IMPORTER(GRU)
     // TODO: This will require splitting the input tensor in the loop when applying activations.
     if (numDirections == 2)
     {
-        ASSERT(std::equal(activations.begin(), activations.begin() + NUM_ACTIVATIONS, activations.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the GRU do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
-        ASSERT(std::equal(activationAlphas.begin(), activationAlphas.begin() + NUM_ACTIVATIONS, activationAlphas.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the GRU do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
-        ASSERT(std::equal(activationBetas.begin(), activationBetas.begin() + NUM_ACTIVATIONS, activationBetas.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the GRU do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activations.begin(), activations.begin() + NUM_ACTIVATIONS, activations.begin() + NUM_ACTIVATIONS) 
+            && "The parser does not currently support cases where activations for the reverse pass of the GRU do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activationAlphas.begin(), activationAlphas.begin() + NUM_ACTIVATIONS, activationAlphas.begin() + NUM_ACTIVATIONS)
+            && "The parser does not currently support cases where activations for the reverse pass of the GRU do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activationBetas.begin(), activationBetas.begin() + NUM_ACTIVATIONS, activationBetas.begin() + NUM_ACTIVATIONS)
+            && "The parser does not currently support cases where activations for the reverse pass of the GRU do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
     }
 
     // Need to split weights/biases into ZR gates and H gate, because h(t) computations depend on z(t) and r(t).
@@ -1321,28 +1338,28 @@ DEFINE_BUILTIN_OP_IMPORTER(GRU)
     {
         // ONNX bias is a concatenation of Wb and Rb on the second axis, so has shape (numDirections, 2 * NUM_GATES *
         // hiddenSize)
-        // Unsqueeze so we can broadcast later
+        // Unsqueeze to (numDirections, 1, 2 * NUM_GATES * hiddenSize) so we can broadcast later
         nvinfer1::ITensor* concatenatedBias = &convertToTensor(inputs.at(3), ctx);
         nvinfer1::IShuffleLayer* unsqueeze = net->addShuffle(*concatenatedBias);
-        unsqueeze->setReshapeDimensions(Dims3{1, numDirections, 2 * NUM_GATES * hiddenSize});
+        unsqueeze->setReshapeDimensions(Dims3{numDirections, 1, 2 * NUM_GATES * hiddenSize});
         unsqueeze->setZeroIsPlaceholder(false);
         concatenatedBias = unsqueeze->getOutput(0);
 
         biasZR
-            = net->addSlice(*concatenatedBias, Dims3{0, 0, 0}, Dims3{1, numDirections, 2 * hiddenSize}, Dims3{1, 1, 1})
+            = net->addSlice(*concatenatedBias, Dims3{0, 0, 0}, Dims3{numDirections, 1, 2 * hiddenSize}, Dims3{1, 1, 1})
                   ->getOutput(0);
         LOG_VERBOSE("Bias for ZR gates shape is: " << biasZR->getDimensions());
-        biasH = net->addSlice(*concatenatedBias, Dims3{0, 0, 2 * hiddenSize}, Dims3{1, numDirections, hiddenSize},
+        biasH = net->addSlice(*concatenatedBias, Dims3{0, 0, 2 * hiddenSize}, Dims3{numDirections, 1, hiddenSize},
                        Dims3{1, 1, 1})
                     ->getOutput(0);
         LOG_VERBOSE("Bias for H gate shape is: " << biasH->getDimensions());
 
         recurrenceBiasZR = net->addSlice(*concatenatedBias, Dims3{0, 0, NUM_GATES * hiddenSize},
-                                  Dims3{1, numDirections, 2 * hiddenSize}, Dims3{1, 1, 1})
+                                  Dims3{numDirections, 1, 2 * hiddenSize}, Dims3{1, 1, 1})
                                ->getOutput(0);
         LOG_VERBOSE("Recurrence bias for ZR gates shape is: " << recurrenceBiasZR->getDimensions());
         recurrenceBiasH = net->addSlice(*concatenatedBias, Dims3{0, 0, (NUM_GATES + 2) * hiddenSize},
-                                 Dims3{1, numDirections, hiddenSize}, Dims3{1, 1, 1})
+                                 Dims3{numDirections, 1, hiddenSize}, Dims3{1, 1, 1})
                               ->getOutput(0);
         LOG_VERBOSE("Recurrence bias for H gate shape is: " << recurrenceBiasH->getDimensions());
     }
@@ -1378,7 +1395,7 @@ DEFINE_BUILTIN_OP_IMPORTER(GRU)
 
     // Add X(t)
     nvinfer1::ITensor* iterationInput = addRNNInput(ctx, node, loop, inputs, direction);
-    ASSERT(iterationInput, ErrorCode::kINVALID_NODE);
+    ASSERT(iterationInput && "Failed to add RNN input.", ErrorCode::kINVALID_NODE);
 
     // H(t-1)
     const auto getInitialInputValue = [&ctx, &gateOutputShape, &inputs, &node](size_t inputIdx) -> nvinfer1::ITensor* {
@@ -1510,11 +1527,6 @@ DEFINE_BUILTIN_OP_IMPORTER(GRU)
                  *net->addElementWise(*zt, *Ht1->getOutput(0), eOp::kPROD)->getOutput(0), eOp::kSUM)
               ->getOutput(0);
 
-    Ht1->setInput(1, *Ht);
-    LOG_VERBOSE("H(t) -> " << Ht->getDimensions());
-
-    std::vector<TensorOrWeights> outputs{};
-    // Y = concatenation of all H(t) for each element of the sequence
     // singlePassShape = (1, batchSize, hiddenSize)
     nvinfer1::ITensor* singlePassShape
         = ctx->network()
@@ -1524,8 +1536,18 @@ DEFINE_BUILTIN_OP_IMPORTER(GRU)
                        ->getOutput(0),
                   nvinfer1::ElementWiseOperation::kDIV)
               ->getOutput(0);
-    outputs.emplace_back(
-        concatenateRNNOutputs(ctx, loop, singlePassShape, getAxisLength(ctx, input, 0), Ht, numDirections));
+    if (inputs.size() > 4 && inputs.at(4))
+    {
+        nvinfer1::ITensor* seqLens = &convertToTensor(inputs.at(4), ctx);
+        auto maxLen = getAxisLength(ctx, input, 0);
+        Ht = numDirections == 2 ? maskBidirRNNHidden(ctx, node, loop, seqLens, maxLen, Ht1->getOutput(0), Ht, singlePassShape) : maskRNNHidden(ctx, node, loop, seqLens, Ht1->getOutput(0), Ht, maxLen, direction == "reverse");
+    }
+    Ht1->setInput(1, *Ht);
+    LOG_VERBOSE("H(t) -> " << Ht->getDimensions());
+
+    std::vector<TensorOrWeights> outputs{};
+    // Y = concatenation of all H(t) for each element of the sequence
+    outputs.emplace_back(concatenateRNNOutputs(ctx, node, loop, singlePassShape, getAxisLength(ctx, input, 0), Ht, numDirections, inputs, direction == "reverse"));
     // Yh = last value of H(t)
     outputs.emplace_back(loop->addLoopOutput(*Ht1->getOutput(0), nvinfer1::LoopOutput::kLAST_VALUE)->getOutput(0));
     return {{outputs}};
@@ -1807,9 +1829,12 @@ DEFINE_BUILTIN_OP_IMPORTER(LSTM)
     // TODO: This will require splitting the input tensor in the loop when applying activations.
     if (numDirections == 2)
     {
-        ASSERT(std::equal(activations.begin(), activations.begin() + NUM_ACTIVATIONS, activations.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the LSTM do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
-        ASSERT(std::equal(activationAlphas.begin(), activationAlphas.begin() + NUM_ACTIVATIONS, activationAlphas.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the LSTM do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
-        ASSERT(std::equal(activationBetas.begin(), activationBetas.begin() + NUM_ACTIVATIONS, activationBetas.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the LSTM do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activations.begin(), activations.begin() + NUM_ACTIVATIONS, activations.begin() + NUM_ACTIVATIONS)
+            && "The parser does not currently support cases where activations for the reverse pass of the LSTM do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activationAlphas.begin(), activationAlphas.begin() + NUM_ACTIVATIONS, activationAlphas.begin() + NUM_ACTIVATIONS)
+            && "The parser does not currently support cases where activations for the reverse pass of the LSTM do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activationBetas.begin(), activationBetas.begin() + NUM_ACTIVATIONS, activationBetas.begin() + NUM_ACTIVATIONS)
+            && "The parser does not currently support cases where activations for the reverse pass of the LSTM do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
     }
 
     // Roll Rb into Wb (and RBb into WBb). Bias is in the form  [Wb[iofc], Rb[iofc], WBb[iofc], RBb[iofc]].
@@ -1877,7 +1902,7 @@ DEFINE_BUILTIN_OP_IMPORTER(LSTM)
 
     // Add X(t)
     nvinfer1::ITensor* iterationInput = addRNNInput(ctx, node, loop, inputs, direction);
-    ASSERT(iterationInput, ErrorCode::kINVALID_NODE);
+    ASSERT(iterationInput && "Failed to add RNN input.", ErrorCode::kINVALID_NODE);
 
     // H(t-1)
     nvinfer1::IRecurrenceLayer* Ht1 = loop->addRecurrence(*initialHidden);
@@ -1986,6 +2011,23 @@ DEFINE_BUILTIN_OP_IMPORTER(LSTM)
               ->addElementWise(*ctx->network()->addElementWise(*ftGate, *Ct1->getOutput(0), eOp::kPROD)->getOutput(0),
                   *ctx->network()->addElementWise(*itGate, *ctGate, eOp::kPROD)->getOutput(0), eOp::kSUM)
               ->getOutput(0);
+
+    nvinfer1::ITensor* singlePassShape
+        = ctx->network()
+              ->addElementWise(*gateOutputShape,
+                  *addConstant(ctx, std::vector<int>{numDirections, 1, 1}, ::ONNX_NAMESPACE::TensorProto_DataType_INT32,
+                       nvinfer1::Dims{1, 3})
+                       ->getOutput(0),
+                  eOp::kDIV)
+              ->getOutput(0);
+
+    if (inputs.size() > 4 && inputs.at(4))
+    {
+        nvinfer1::ITensor* seqLens = &convertToTensor(inputs.at(4), ctx);
+        auto maxLen = getAxisLength(ctx, input, 0);
+        Ct = numDirections == 2 ? maskBidirRNNHidden(ctx, node, loop, seqLens, maxLen, Ct1->getOutput(0), Ct, singlePassShape) : maskRNNHidden(ctx, node, loop, seqLens, Ct1->getOutput(0), Ct, maxLen, direction == "reverse");
+    }
+
     Ct1->setInput(1, *Ct);
     LOG_VERBOSE("C(t) -> " << Ct->getDimensions());
 
@@ -2009,22 +2051,21 @@ DEFINE_BUILTIN_OP_IMPORTER(LSTM)
     hAct->setBeta(activationBetas.at(2));
 
     nvinfer1::ITensor* Ht = ctx->network()->addElementWise(*otGate, *hAct->getOutput(0), eOp::kPROD)->getOutput(0);
+    if (inputs.size() > 4 && inputs.at(4))
+    {
+        nvinfer1::ITensor* seqLens = &convertToTensor(inputs.at(4), ctx);
+        auto maxLen = getAxisLength(ctx, input, 0);
+        Ht = numDirections == 2 ? maskBidirRNNHidden(ctx, node, loop, seqLens, maxLen, Ht1->getOutput(0), Ht, singlePassShape) : maskRNNHidden(ctx, node, loop, seqLens, Ht1->getOutput(0), Ht, maxLen, direction == "reverse");
+    }
     Ht1->setInput(1, *Ht);
     LOG_VERBOSE("H(t) -> " << Ht->getDimensions());
 
     std::vector<TensorOrWeights> outputs{};
     // Y = concatenation of all H(t) for each element of the sequence
     // singlePassShape = (1, batchSize, hiddenSize)
-    nvinfer1::ITensor* singlePassShape
-        = ctx->network()
-              ->addElementWise(*gateOutputShape,
-                  *addConstant(ctx, std::vector<int>{numDirections, 1, 1}, ::ONNX_NAMESPACE::TensorProto_DataType_INT32,
-                       nvinfer1::Dims{1, 3})
-                       ->getOutput(0),
-                  eOp::kDIV)
-              ->getOutput(0);
+
     outputs.emplace_back(
-        concatenateRNNOutputs(ctx, loop, singlePassShape, getAxisLength(ctx, input, 0), Ht, numDirections));
+        concatenateRNNOutputs(ctx, node, loop, singlePassShape, getAxisLength(ctx, input, 0), Ht, numDirections, inputs, direction == "reverse"));
     // Yh = last value of H(t)
     outputs.emplace_back(loop->addLoopOutput(*Ht1->getOutput(0), nvinfer1::LoopOutput::kLAST_VALUE)->getOutput(0));
     // Yc = last value of C(t)
@@ -2032,7 +2073,6 @@ DEFINE_BUILTIN_OP_IMPORTER(LSTM)
 
     return {{outputs}};
 }
-
 DEFINE_BUILTIN_OP_IMPORTER(MatMul)
 {
     nvinfer1::ITensor* inputA = &convertToTensor(inputs.at(0), ctx);
@@ -2655,9 +2695,12 @@ DEFINE_BUILTIN_OP_IMPORTER(RNN)
     // TODO: This will require splitting the input tensor in the loop when applying activations.
     if (numDirections == 2)
     {
-        ASSERT(std::equal(activations.begin(), activations.begin() + NUM_ACTIVATIONS, activations.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the RNN do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
-        ASSERT(std::equal(activationAlphas.begin(), activationAlphas.begin() + NUM_ACTIVATIONS, activationAlphas.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the RNN do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
-        ASSERT(std::equal(activationBetas.begin(), activationBetas.begin() + NUM_ACTIVATIONS, activationBetas.begin() + NUM_ACTIVATIONS) && "The parser does not currently support cases where activations for the reverse pass of the RNN do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activations.begin(), activations.begin() + NUM_ACTIVATIONS, activations.begin() + NUM_ACTIVATIONS) 
+            && "The parser does not currently support cases where activations for the reverse pass of the RNN do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activationAlphas.begin(), activationAlphas.begin() + NUM_ACTIVATIONS, activationAlphas.begin() + NUM_ACTIVATIONS) 
+            && "The parser does not currently support cases where activations for the reverse pass of the RNN do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
+        ASSERT(std::equal(activationBetas.begin(), activationBetas.begin() + NUM_ACTIVATIONS, activationBetas.begin() + NUM_ACTIVATIONS) 
+            && "The parser does not currently support cases where activations for the reverse pass of the RNN do not match the forward pass.", ErrorCode::kUNSUPPORTED_NODE);
     }
 
     // Roll Rb into Wb (and RBb into WBb). Bias is in the form  [Wb[iofc], Rb[iofc], WBb[iofc], RBb[iofc]].
@@ -2720,7 +2763,7 @@ DEFINE_BUILTIN_OP_IMPORTER(RNN)
 
     // Add X(t)
     nvinfer1::ITensor* iterationInput = addRNNInput(ctx, node, loop, inputs, direction);
-    ASSERT(iterationInput, ErrorCode::kINVALID_NODE);
+    ASSERT(iterationInput && "Failed to add RNN input.", ErrorCode::kINVALID_NODE);
 
     // H(t-1)
     nvinfer1::IRecurrenceLayer* hiddenState = loop->addRecurrence(*initialHidden);
@@ -2756,11 +2799,6 @@ DEFINE_BUILTIN_OP_IMPORTER(RNN)
     hAct->setBeta(activationBetas.at(0));
     nvinfer1::ITensor* Ht = hAct->getOutput(0);
 
-    hiddenState->setInput(1, *Ht);
-    LOG_VERBOSE("H(t) -> " << Ht->getDimensions());
-
-    std::vector<TensorOrWeights> outputs{};
-    // Y = concatenation of all H(t) for each element of the sequence
     // singlePassShape = (1, batchSize, hiddenSize)
     nvinfer1::ITensor* singlePassShape
         = ctx->network()
@@ -2770,11 +2808,22 @@ DEFINE_BUILTIN_OP_IMPORTER(RNN)
                        ->getOutput(0),
                   nvinfer1::ElementWiseOperation::kDIV)
               ->getOutput(0);
-    outputs.emplace_back(
-        concatenateRNNOutputs(ctx, loop, singlePassShape, getAxisLength(ctx, input, 0), Ht, numDirections));
+
+    if (inputs.size() > 4 && inputs.at(4))
+    {
+        nvinfer1::ITensor* seqLens = &convertToTensor(inputs.at(4), ctx);
+        auto maxLen = getAxisLength(ctx, input, 0);
+        Ht = numDirections == 2 ? maskBidirRNNHidden(ctx, node, loop, seqLens, maxLen, hiddenState->getOutput(0), Ht, singlePassShape) : maskRNNHidden(ctx, node, loop, seqLens, hiddenState->getOutput(0), Ht, maxLen, direction == "reverse");
+    }
+
+    hiddenState->setInput(1, *Ht);
+    LOG_VERBOSE("H(t) -> " << Ht->getDimensions());
+
+    std::vector<TensorOrWeights> outputs{};
+    // Y = concatenation of all H(t) for each element of the sequence
+    outputs.emplace_back(concatenateRNNOutputs(ctx, node, loop, singlePassShape, getAxisLength(ctx, input, 0), Ht, numDirections, inputs, direction == "reverse"));
     // Yh = last value of H(t)
-    outputs.emplace_back(
-        loop->addLoopOutput(*hiddenState->getOutput(0), nvinfer1::LoopOutput::kLAST_VALUE)->getOutput(0));
+    outputs.emplace_back(loop->addLoopOutput(*hiddenState->getOutput(0), nvinfer1::LoopOutput::kLAST_VALUE)->getOutput(0));
 
     return {{outputs}};
 }
