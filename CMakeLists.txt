@@ -25,7 +25,7 @@ set(PARSER_LINKER_SCRIPT  ${ONNX2TRT_ROOT}/libnvonnxparser.version)
 #--------------------------------------------------
 set(ONNX2TRT_MAJOR 8)
 set(ONNX2TRT_MINOR 0)
-set(ONNX2TRT_PATCH 0)
+set(ONNX2TRT_PATCH 1)
 
 #--------------------------------------------------
 # Build configurations, global to all projects
@@ -99,7 +99,7 @@ find_library(TENSORRT_LIBRARY_INFER nvinfer
 find_library(TENSORRT_LIBRARY_INFER_PLUGIN nvinfer_plugin
   HINTS  ${TENSORRT_ROOT} ${TENSORRT_BUILD} ${CUDA_TOOLKIT_ROOT_DIR}
   PATH_SUFFIXES lib lib64 lib/x64)
-set(TENSORRT_LIBRARY ${TENSORRT_LIBRARY_INFER} ${TENSORRT_LIBRARY_INFER_PLUGIN} ${TENSORRT_LIBRARY_MYELIN})
+set(TENSORRT_LIBRARY ${TENSORRT_LIBRARY_INFER} ${TENSORRT_LIBRARY_INFER_PLUGIN})
 MESSAGE(STATUS "Find TensorRT libs at ${TENSORRT_LIBRARY}")
 find_package_handle_standard_args(
   TENSORRT DEFAULT_MSG TENSORRT_INCLUDE_DIR TENSORRT_LIBRARY)

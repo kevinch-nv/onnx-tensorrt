@@ -54,6 +54,7 @@ public:
     const char* name{};
 };
 
-bool transposeWeights(ShapedWeights const& weights, nvinfer1::Permutation const& perm, ShapedWeights* result);
+class IImporterContext;
+bool transposeWeights(ShapedWeights const& weights, nvinfer1::Permutation const& perm, ShapedWeights* result, IImporterContext* ctx);
 
 } // namespace onnx2trt

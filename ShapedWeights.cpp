@@ -132,7 +132,7 @@ void transpose4DWeights(ShapedWeights const& weights, nvinfer1::Permutation cons
     }
 }
 
-bool transposeWeights(ShapedWeights const& weights, nvinfer1::Permutation const& perm, ShapedWeights* result)
+bool transposeWeights(ShapedWeights const& weights, nvinfer1::Permutation const& perm, ShapedWeights* result, IImporterContext* ctx)
 {
     nvinfer1::Dims shape = weights.shape;
     int nbDims = shape.nbDims;
@@ -165,6 +165,12 @@ bool transposeWeights(ShapedWeights const& weights, nvinfer1::Permutation const&
         // Unsupported weights transpose
         return false;
     }
+    nvinfer1::Dims permDims{nbDims, {}};
+    std::copy_n(perm.order, nbDims, permDims.d);
+    LOG_WARNING("Weights "
+        << weights.getName() << " has been transposed with permutation of " << permDims
+        << "! If you plan on overwriting the weights with the Refitter API, the new weights must be pre-transposed.");
+    result->setName(weights.getName());
     return true;
 }
 

@@ -135,7 +135,7 @@ Status parseGraph(IImporterContext* ctx, const ::ONNX_NAMESPACE::GraphProto& gra
                 LOG_VERBOSE("Searching for input: " << inputName);
                 ASSERT( (ctx->tensors().count(inputName)) && "Node input was not registered.", ErrorCode::kINVALID_GRAPH);
                 nodeInputs.push_back(ctx->tensors().at(inputName));
-                ssInputs << "[" << inputName << " -> " << nodeInputs.back().shape() << "], ";
+                ssInputs << "[" << inputName << " -> " << nodeInputs.back().shape() << "[" << nodeInputs.back().getType() << "]" <<"], ";
             }
         }
         LOG_VERBOSE(ssInputs.str());
@@ -210,7 +210,7 @@ Status parseGraph(IImporterContext* ctx, const ::ONNX_NAMESPACE::GraphProto& gra
         {
             const auto& outputName = node.output(i);
             auto& output = outputs.at(i);
-            ssOutputs << "[" << outputName << " -> " << output.shape() << "], ";
+            ssOutputs << "[" << outputName << " -> " << output.shape() << "[" << output.getType() << "]" << "], ";
             // Note: This condition is to allow ONNX outputs to be ignored
             // Always register output weights (even empty ones) as it may be mapped to an unused input
             if ((output || output.is_weights()) && !outputName.empty())

@@ -393,10 +393,28 @@ int32_t* convertINT64(const int64_t* weightValues, nvinfer1::Dims shape, IImport
     return int32Weights;
 }
 
+nvinfer1::ITensor* convertGatherIndices(IImporterContext* ctx, nvinfer1::ITensor* data, nvinfer1::ITensor* indices, int32_t axis)
+{
+    const int32_t n = indices->getDimensions().nbDims;
+    auto axisLength = getAxisLength(ctx, data, axis);
+    broadcastTensor(ctx, axisLength, n);
+
+    // The formula here implements "indices < 0 ? indices + axisLength : indices"
+    // via the formula "indices - axisLength * max(-1, min(0, indices))".
+    // Think of the "max(-1, min(0, indices))" as extracting the sign bit from the indices.
+    const nvinfer1::Dims d = makeDims(n, 1);
+    auto zero = addConstantScalar(ctx, 0, ::ONNX_NAMESPACE::TensorProto::INT32, d)->getOutput(0);
+    auto minusOne = addConstantScalar(ctx, -1, ::ONNX_NAMESPACE::TensorProto::INT32, d)->getOutput(0);
+    auto min = ctx->network()->addElementWise(*zero, *indices, nvinfer1::ElementWiseOperation::kMIN)->getOutput(0);
+    auto max = ctx->network()->addElementWise(*minusOne, *min, nvinfer1::ElementWiseOperation::kMAX)->getOutput(0);
+    auto prod = ctx->network()->addElementWise(*max, *axisLength, nvinfer1::ElementWiseOperation::kPROD)->getOutput(0);
+    auto sub = ctx->network()->addElementWise(*indices, *prod, nvinfer1::ElementWiseOperation::kSUB)->getOutput(0);
+    return sub;
+}
+
 bool convertOnnxPadding(std::vector<int64_t>& onnxPadding, nvinfer1::Dims2& begPadding, nvinfer1::Dims2& endPadding,
     nvinfer1::Permutation& firstPerm, nvinfer1::Permutation& secondPerm)
 {
-    
     // Input tensor may have been unsqueezed to 4D. Insert no-op pads for all unsqueezed dimensions
     const size_t minimumSize = 8;
     while (onnxPadding.size() < minimumSize)
@@ -404,6 +422,7 @@ bool convertOnnxPadding(std::vector<int64_t>& onnxPadding, nvinfer1::Dims2& begP
         onnxPadding.insert(onnxPadding.begin() + onnxPadding.size() / 2, 0);
         onnxPadding.insert(onnxPadding.begin(), 0);
     }
+
     const auto size = onnxPadding.size();
     const auto half = size / 2;
     std::set<size_t> pads;
@@ -517,30 +536,11 @@ nvinfer1::ITensor* createZeroTensor(IImporterContext* ctx, nvinfer1::ITensor* da
     else
     {
         zero
-            = addConstant(ctx, std::vector<int>{0}, ::ONNX_NAMESPACE::TensorProto::INT32, {0, {1}})->getOutput(0);
+            = addConstant(ctx, std::vector<int32_t>{0}, ::ONNX_NAMESPACE::TensorProto::INT32, {0, {1}})->getOutput(0);
     }
     broadcastTensors(ctx, zero, data);
     zero = ctx->network()->addElementWise(*data, *zero, nvinfer1::ElementWiseOperation::kPROD)->getOutput(0);
     return zero;
-}
-
-nvinfer1::ITensor* convertGatherIndices(IImporterContext* ctx, nvinfer1::ITensor* data, nvinfer1::ITensor* indices, int32_t axis)
-{
-    const int32_t n = indices->getDimensions().nbDims;
-    auto axisLength = getAxisLength(ctx, data, axis);
-    broadcastTensor(ctx, axisLength, n);
-
-    // The formula here implements "indices < 0 ? indices + axisLength : indices"
-    // via the formula "indices - axisLength * max(-1, min(0, indices))".
-    // Think of the "max(-1, min(0, indices))" as extracting the sign bit from the indices.
-    const nvinfer1::Dims d = makeDims(n, 1);
-    auto zero = addConstantScalar(ctx, 0, ::ONNX_NAMESPACE::TensorProto::INT32, d)->getOutput(0);
-    auto minusOne = addConstantScalar(ctx, -1, ::ONNX_NAMESPACE::TensorProto::INT32, d)->getOutput(0);
-    auto min = ctx->network()->addElementWise(*zero, *indices, nvinfer1::ElementWiseOperation::kMIN)->getOutput(0);
-    auto max = ctx->network()->addElementWise(*minusOne, *min, nvinfer1::ElementWiseOperation::kMAX)->getOutput(0);
-    auto prod = ctx->network()->addElementWise(*max, *axisLength, nvinfer1::ElementWiseOperation::kPROD)->getOutput(0);
-    auto sub = ctx->network()->addElementWise(*indices, *prod, nvinfer1::ElementWiseOperation::kSUB)->getOutput(0);
-    return sub;
 }
 
 template <typename DataType>
@@ -624,8 +624,8 @@ bool convertOnnxWeights(
     if (dataLocation == 1)
     {
         std::string location{""};
-        int offset{0};
-        int length{0};
+        int64_t offset{0};
+        int64_t length{0};
 
         // onnxTensor.external_data() is a String : String map that holds metadata about how to read from an external
         // file
@@ -638,11 +638,11 @@ bool convertOnnxWeights(
             }
             else if (keyName == "offset")
             {
-                offset = std::atoi(onnxMapEntry.value().c_str());
+                offset = std::atoll(onnxMapEntry.value().c_str());
             }
             else if (keyName == "length")
             {
-                length = std::atoi(onnxMapEntry.value().c_str());
+                length = std::atoll(onnxMapEntry.value().c_str());
             }
             // Not used at the moment
             else if (keyName == "checksum")
@@ -855,9 +855,12 @@ nvinfer1::ITensor& convertToTensor(TensorOrWeights& input, IImporterContext* ctx
     // then cast it back to bool within TRT.
     if (weights.type == ::ONNX_NAMESPACE::TensorProto::BOOL)
     {
+        // If bool is stored as raw_data, we use 1 byte for each element.
+        // If bool is stored as int32_data, we will convert it to 1 byte for each element in convertOnnxWeights.
         ShapedWeights convertedWeights = ctx->createTempWeights(::ONNX_NAMESPACE::TensorProto::INT32, weights.shape);
-        int* intValues = static_cast<int*>(weights.values);
-        std::memcpy(convertedWeights.values, intValues, weights.count() * sizeof(int));
+        uint8_t* byteValues = static_cast<uint8_t*>(weights.values);
+        int32_t* intValues = static_cast<int32_t*>(convertedWeights.values);
+        std::transform(byteValues, byteValues + weights.count(), intValues, [](uint8_t ch) { return ch; });
         auto* boolTensor = ctx->network()->addConstant(convertedWeights.shape, convertedWeights)->getOutput(0);
         return *castHelper(ctx, boolTensor, nvinfer1::DataType::kBOOL);
     }
@@ -1586,7 +1589,7 @@ nvinfer1::Dims insertDimension(const nvinfer1::Dims& dims, const int axis, const
     return newDims;
 }
 
-bool parseExternalWeights(IImporterContext* ctx, std::string file, std::string path, int offset, int length,
+bool parseExternalWeights(IImporterContext* ctx, std::string file, std::string path, int64_t offset, int64_t length,
     std::vector<char>& weightsBuf, size_t& size)
 {
     // The weight paths in the ONNX model are relative paths to the main ONNX file.
@@ -1723,16 +1726,21 @@ NodeImportResult poolingHelper(IImporterContext* ctx, ::ONNX_NAMESPACE::NodeProt
 }
 
 NodeImportResult reduceTensor(IImporterContext* ctx, ::ONNX_NAMESPACE::NodeProto const& node, TensorOrWeights input,
-    nvinfer1::ReduceOperation operation)
+    nvinfer1::ReduceOperation operation, TensorOrWeights inputAxes)
 {
     nvinfer1::ITensor& tensor = convertToTensor(input, ctx);
     OnnxAttrs attrs(node, ctx);
     bool keepdims = attrs.get("keepdims", 1);
     int ndim = tensor.getDimensions().nbDims;
-    std::vector<int> axes;
+    std::vector<int32_t> axes;
     if (attrs.count("axes"))
     {
         axes = attrs.get<std::vector<int>>("axes");
+    }
+    else if (!inputAxes.isNullTensor())
+    {
+        ASSERT(inputAxes.is_weights() && "Axis input must be an initializer!", ErrorCode::kUNSUPPORTED_NODE);
+        weightsToVector<int32_t>(inputAxes.weights(), &axes);
     }
     else
     {
@@ -2016,10 +2024,43 @@ NodeImportResult unaryHelper(
 {
     nvinfer1::ITensor* tensorPtr = &convertToTensor(input, ctx);
     auto inputType = tensorPtr->getType();
-    // TRT does not support INT32 types for Unary operations. TRT only supports BOOL types for the NOT operation
-    bool validUnaryType = op == nvinfer1::UnaryOperation::kNOT
-        ? inputType == nvinfer1::DataType::kBOOL
-        : inputType != nvinfer1::DataType::kBOOL && inputType != nvinfer1::DataType::kINT32;
+    bool validUnaryType = true;
+    switch (op)
+    {
+    case nvinfer1::UnaryOperation::kNOT:
+    {
+        // TRT only supports BOOL types for the NOT operation
+        validUnaryType = (inputType == nvinfer1::DataType::kBOOL);
+        break;
+    }
+    case nvinfer1::UnaryOperation::kABS:
+    {
+        // ABS can work with INT32 types via temporary cast to FLOAT.
+        if (inputType == nvinfer1::DataType::kINT32)
+        {
+            tensorPtr = castHelper(ctx, tensorPtr, nvinfer1::DataType::kFLOAT);
+        }
+        break;
+    }
+    case nvinfer1::UnaryOperation::kNEG:
+    {
+        // NEG can work with INT32 types via ElementWise Layer: (0 - x)
+        if (inputType == nvinfer1::DataType::kINT32)
+        {
+            // Calculate the rank of the input, and set all size to one and rely on broadcasting
+            nvinfer1::ITensor* zeroTensor = addConstant(ctx, std::vector<int32_t>{0}, ::ONNX_NAMESPACE::TensorProto::INT32, {0, {1}})->getOutput(0);
+            CHECK(broadcastTensors(ctx, zeroTensor, tensorPtr));
+            std::vector<TensorOrWeights> layerInputs = {zeroTensor, tensorPtr};
+            return elementwiseHelper(ctx, node, layerInputs, nvinfer1::ElementWiseOperation::kSUB);
+        }
+        break;
+    }
+    default:
+    {
+        // By default TRT does not support INT32 types for Unary operations.
+        validUnaryType = (inputType != nvinfer1::DataType::kBOOL && inputType != nvinfer1::DataType::kINT32);
+    }
+    }
     ASSERT(validUnaryType
             && "This version of TensorRT does not support the given operator with the given input data type.",
         ErrorCode::kUNSUPPORTED_NODE);
@@ -2041,6 +2082,20 @@ NodeImportResult unaryHelper(
     {
         std::vector<int> axes{0};
         tensorPtr = squeezeTensor(ctx, node, *tensorPtr, axes);
+    }
+
+    switch (op)
+    {
+    case nvinfer1::UnaryOperation::kABS:
+    {
+        // Convert casted FLOAT back to INT32
+        if (inputType == nvinfer1::DataType::kINT32)
+        {
+            tensorPtr = castHelper(ctx, tensorPtr, nvinfer1::DataType::kINT32);
+        }
+        break;
+    }
+    default: break;
     }
 
     return {{tensorPtr}};
@@ -2200,32 +2255,6 @@ int64_t volume(const nvinfer1::Dims& dims)
     std::for_each(
         dims.d, dims.d + dims.nbDims, [](int d) { assert(d >= 0 && "volume makes no sense for dynamic shapes"); });
     return std::accumulate(dims.d, dims.d + dims.nbDims, 1, std::multiplies<int64_t>{});
-}
-
-Status weightsToVector(TensorOrWeights weights, std::vector<int64_t>* weightVector)
-{
-    ASSERT(weights.is_weights(), ErrorCode::kUNSUPPORTED_NODE);
-    ASSERT((weights.weights().type == ::ONNX_NAMESPACE::TensorProto::INT32)
-            || (weights.weights().type == ::ONNX_NAMESPACE::TensorProto::INT64)
-            || (weights.weights().type == ::ONNX_NAMESPACE::TensorProto::BOOL),
-        ErrorCode::kINVALID_NODE);
-    weightVector->resize(weights.weights().count());
-    if (weights.weights().type == ::ONNX_NAMESPACE::TensorProto::INT64)
-    {
-        auto array_start = static_cast<int64_t*>(weights.weights().values);
-        std::copy(array_start, array_start + weights.weights().count(), weightVector->begin());
-    }
-    else if (weights.weights().type == ::ONNX_NAMESPACE::TensorProto::INT32)
-    {
-        auto array_start = static_cast<int32_t*>(weights.weights().values);
-        std::copy(array_start, array_start + weights.weights().count(), weightVector->begin());
-    }
-    else if (weights.weights().type == ::ONNX_NAMESPACE::TensorProto::BOOL)
-    {
-        auto array_start = static_cast<bool*>(weights.weights().values);
-        std::copy(array_start, array_start + weights.weights().count(), weightVector->begin());
-    }
-    return Status(ErrorCode::kSUCCESS);
 }
 
 const std::string getNodeName(const ::ONNX_NAMESPACE::NodeProto& node)

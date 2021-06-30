@@ -2,7 +2,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
 #ifndef NV_ONNX_PARSER_H
 #define NV_ONNX_PARSER_H
 
@@ -108,7 +107,7 @@ class IParser
 {
 public:
     /** \brief Parse a serialized ONNX model into the TensorRT network.
-     *         This method has very limited diagnostic. If parsing the serialized model
+     *         This method has very limited diagnostics. If parsing the serialized model
      *         fails for any reason (e.g. unsupported IR version, unsupported opset, etc.)
      *         it the user responsibility to intercept and report the error.
      *         To obtain a better diagnostic, use the parseFromFile method below.
@@ -125,7 +124,7 @@ public:
                        const char* model_path = nullptr)
         = 0;
 
-    /** \brief Parse an onnx model file, can be a binary protobuf or a text onnx model
+    /** \brief Parse an onnx model file, which can be a binary protobuf or a text onnx model
      *         calls parse method inside.
      *
      * \param File name
@@ -214,6 +213,12 @@ namespace
  * \param network The network definition that the parser will write to
  * \param logger The logger to use
  * \return a new parser object or NULL if an error occurred
+ *
+ * Any input dimensions that are constant should not be changed after parsing,
+ * because correctness of the translation may rely on those constants.
+ * Changing a dynamic input dimension, i.e. one that translates to -1 in
+ * TensorRT, to a constant is okay if the constant is consistent with the model.
+ *
  * \see IParser
  */
 inline IParser* createParser(nvinfer1::INetworkDefinition& network, nvinfer1::ILogger& logger)
