@@ -10,6 +10,13 @@ from onnx import numpy_helper
 import numpy as np
 import six
 
+# POLYGRAPHY:
+
+from polygraphy.logger import G_LOGGER
+
+from polygraphy.backend.trt import EngineBytesFromNetwork, EngineFromBytes, NetworkFromOnnxBytes, TrtRunner, Profile, CreateConfig
+from polygraphy.comparator import Comparator, DataLoader
+
 # HACK Should look for a better way/place to do this
 from ctypes import cdll, c_char_p
 libcudart = cdll.LoadLibrary('libcudart.so')
@@ -30,200 +37,108 @@ def count_trailing_ones(vals):
         count += 1
     return count
 
-TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
-
 class TensorRTBackendRep(BackendRep):
-    def __init__(self, model, device,
-            max_workspace_size=None, serialize_engine=False, verbose=False, **kwargs):
+    def __init__(self, model, device, **kwargs):
         if not isinstance(device, Device):
             device = Device(device)
-        self._set_device(device)
-        self._logger = TRT_LOGGER
-        self.builder = trt.Builder(self._logger)
-        self.network = self.builder.create_network(flags=0)
-        self.parser = trt.OnnxParser(self.network, self._logger)
-        self.config = self.builder.create_builder_config()
-        self.serialize_engine = serialize_engine
-        self.verbose = verbose
-        self.dynamic = False
-
-        if self.verbose:
-            print(f'\nRunning {model.graph.name}...')
-            TRT_LOGGER.min_severity = trt.Logger.VERBOSE
-
+        self._set_device(device) # TODO: Update.
+        # TODO: Update logging verbosity.
+        self._logger = G_LOGGER
+        
+        # self.inputs_shape_tuple = [(input.name, False) for input in model.graph.input]
+        
         if not isinstance(model, six.string_types):
             model_str = model.SerializeToString()
         else:
             model_str = model
-
-        if not trt.init_libnvinfer_plugins(TRT_LOGGER, ""):
-            msg = "Failed to initialize TensorRT's plugin library."
-            raise RuntimeError(msg)
-
-        if not self.parser.parse(model_str):
-            error = self.parser.get_error(0)
-            msg = "While parsing node number %i:\n" % error.node()
-            msg += ("%s:%i In function %s:\n[%i] %s" %
-                    (error.file(), error.line(), error.func(),
-                     error.code(), error.desc()))
-            raise RuntimeError(msg)
-        if max_workspace_size is None:
-            max_workspace_size = 1 << 28
-
-        self.config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, max_workspace_size)
-
-        num_inputs = self.network.num_inputs
-        for idx in range(num_inputs):
-            inp_tensor = self.network.get_input(idx)
-            if inp_tensor.is_shape_tensor or -1 in inp_tensor.shape:
-                self.dynamic = True
-                break
-
-        if self.verbose:
-            for layer in self.network:
-                print(layer)
-
-            print(f'Output shape: {self.network[-1].get_output(0).shape}')
-
-        if self.dynamic:
-            if self.verbose:
-                print("Found dynamic inputs! Deferring engine build to run stage")
-        else:
-            self._build_engine()
-
-        self._output_shapes = {}
-        self._output_dtype = {}
-        for output in model.graph.output:
-            dims = output.type.tensor_type.shape.dim
-            output_shape = tuple([dim.dim_value for dim in dims])
-            self._output_shapes[output.name] = output_shape
-            self._output_dtype[output.name] = output.type.tensor_type.elem_type
-
-    def _build_engine(self, inputs=None):
-        """
-        Builds TensorRT Engine, with BuilderConfig if needed
-        :param inputs: inputs to the model; if not None, this means we are building the engine at run time,
-                       because we need to register optimization profiles for some inputs
-        :type inputs: List of np.ndarray
-        """
-
-        if inputs:
-            opt_profile = self.builder.create_optimization_profile()
-
-            # Set optimization profiles for the input bindings that need them
-            for i in range(self.network.num_inputs):
-                inp_tensor = self.network.get_input(i)
-                name = inp_tensor.name
-                # Set profiles for shape tensors
-                if inp_tensor.is_shape_tensor:
-                    if inputs[i].ndim > 0:
-                        val_list = inputs[i].tolist()
-                        opt_profile.set_shape_input(name, val_list, val_list, val_list)
-                    else:
-                        opt_profile.set_shape_input(name, [inputs[i]], [inputs[i]], [inputs[i]])
-                # Set profiles for dynamic execution tensors
-                elif -1 in inp_tensor.shape:
-                    opt_profile.set_shape(name, inputs[i].shape, inputs[i].shape, inputs[i].shape)
-
-            self.config.add_optimization_profile(opt_profile)
-        trt_blob = self.builder.build_serialized_network(self.network, self.config)
-
-        if trt_blob is None:
-            raise RuntimeError("Failed to build TensorRT engine from network")
-
-        trt_engine = self._deserialize(trt_blob)
-        self.engine = Engine(trt_engine)
+        
+        # print(model) # Model str representation
+        # print(model_str) # model serialized to bytes.
+        
+        # Polygraphy helper functions to parse and build TensorRT engines from ONNX.    
+        self.poly_network = NetworkFromOnnxBytes(model_str)
+        
+        self.builder, self.network, self.parser = self.poly_network()
+        
+        self.inputs = []
+        
+        for i in range(self.network.num_inputs):
+            inp = self.network.get_input(i)
+            is_dynamic = -1 in inp.shape
+            self.inputs.append((inp.name, is_dynamic))
 
     def _set_device(self, device):
         self.device = device
         assert(device.type == DeviceType.CUDA)
         cudaSetDevice(device.device_id)
 
-    def _deserialize(self, trt_blob):
-        self.runtime = trt.Runtime(TRT_LOGGER)
-        del self.parser # Parser no longer needed for ownership of plugins
-        trt_engine = self.runtime.deserialize_cuda_engine(trt_blob)
-        return trt_engine
-
     def run(self, inputs, **kwargs):
         """Execute the prepared engine and return the outputs as a named tuple.
         inputs -- Input tensor(s) as a Numpy array or list of Numpy arrays.
         """
+
         if isinstance(inputs, np.ndarray):
             inputs = [inputs]
+            
+        config = CreateConfig()
+            
+        for runtime_input, input_metadata in zip(inputs, self.inputs):
+            if input_metadata[1]: # Dynamic = True
+                shape = runtime_input.shape
+                config.profiles[-1].add(input_metadata[0], min=shape, opt=shape, max=shape)
 
-        if self.dynamic:
-            self._build_engine(inputs)
+        build_engine = EngineBytesFromNetwork([self.builder, self.network], config=config)
+        deserialize_engine = EngineFromBytes(build_engine)
+        
+        # Use TensorRT polygraphy runner.
+        runners = [
+            TrtRunner(deserialize_engine),
+        ]
 
-        outputs = self.engine.run(inputs)
-        output_names = [output.name for output in self.engine.outputs]
+        # Runner Execution. results is a list of (RunnerName, DataResults) tuples
+        results = Comparator.run(runners)
+        
+        assert len(results) == 1
+        
+        dict_results = results[0][1][0]
+        
+        print(dict_results)
+        
+        return dict_results
+        #build_engine = EngineBytesFromNetwork(self.poly_network)  
+        
+        #outputs = self.engine.run(inputs)
+        #output_names = [output.name for output in self.engine.outputs]
 
-        for i, (name, array) in enumerate(zip(output_names, outputs)):
-            output_shape = self._output_shapes[name]
-            # HACK WAR for unknown output shape in run_node
-            if output_shape == (-99,):
-                # WAR for TRT requiring at least 2 dims (NC)
-                min_dims = 2
-                if _tensorrt_version()[0] < 4:
-                    # WAR for TRT only supporting 4D (NCHW) tensors
-                    min_dims = 4
-                if array.ndim == min_dims:
-                    npadding_dims = count_trailing_ones(array.shape)
-                    if npadding_dims > 0:
-                        outputs[i] = array.reshape(
-                            array.shape[:-npadding_dims])
-            else:
-                # HACK WAR replace fixed batch dim with variable
-                if self._output_dtype[name] == onnx.TensorProto.INT64 and array.dtype == np.int32:
-                    casted_output = np.array(outputs[i], dtype=np.int64)
-                    if np.equal(outputs[i], casted_output).all():
-                        outputs[i] = np.array(outputs[i], dtype=np.int64)
-                if self._output_dtype[name] == onnx.TensorProto.DOUBLE and array.dtype == np.float32:
-                    casted_output = np.array(outputs[i], dtype=np.double)
-                    if np.equal(outputs[i], casted_output).all():
-                        outputs[i] = np.array(outputs[i], dtype=np.double)
+        # for i, (name, array) in enumerate(zip(output_names, outputs)):
+        #     output_shape = self._output_shapes[name]
+        #     # HACK WAR for unknown output shape in run_node
+        #     if output_shape == (-99,):
+        #         # WAR for TRT requiring at least 2 dims (NC)
+        #         min_dims = 2
+        #         if _tensorrt_version()[0] < 4:
+        #             # WAR for TRT only supporting 4D (NCHW) tensors
+        #             min_dims = 4
+        #         if array.ndim == min_dims:
+        #             npadding_dims = count_trailing_ones(array.shape)
+        #             if npadding_dims > 0:
+        #                 outputs[i] = array.reshape(
+        #                     array.shape[:-npadding_dims])
+        #     else:
+        #         # HACK WAR replace fixed batch dim with variable
+        #         if self._output_dtype[name] == onnx.TensorProto.INT64 and array.dtype == np.int32:
+        #             casted_output = np.array(outputs[i], dtype=np.int64)
+        #             if np.equal(outputs[i], casted_output).all():
+        #                 outputs[i] = np.array(outputs[i], dtype=np.int64)
+        #         if self._output_dtype[name] == onnx.TensorProto.DOUBLE and array.dtype == np.float32:
+        #             casted_output = np.array(outputs[i], dtype=np.double)
+        #             if np.equal(outputs[i], casted_output).all():
+        #                 outputs[i] = np.array(outputs[i], dtype=np.double)
+        
+        return None
 
-        outputs_tuple = namedtupledict('Outputs', output_names)(*outputs)
-        return namedtupledict('Outputs', output_names)(*outputs)
-
-def np2onnx_dtype(np_dtype):
-    if np_dtype == np.dtype('float32'):
-        return onnx.TensorProto.FLOAT
-    elif np_dtype == np.dtype('float16'):
-        return onnx.TensorProto.FLOAT16
-    elif np_dtype == np.dtype('int64'):
-        return onnx.TensorProto.INT64
-    elif np_dtype == np.dtype('int32'):
-        return onnx.TensorProto.INT32
-    elif np_dtype == np.dtype('int8'):
-        return onnx.TensorProto.INT8
-    elif np_dtype == np.dtype('double'):
-        return onnx.TensorProto.DOUBLE
-    else:
-        raise TypeError("Unsupported data type:", np_dtype)
-
-def make_node_test_model(node, inputs, use_weights=True):
-    # HACK TODO: The output info is unknown here; not sure what the best solution is
-    output_dtype = np.float32 # Dummy value only
-    output_shape = [-99]      # Dummy value only
-    graph_inputs = [onnx_helper.make_tensor_value_info(
-        name, np2onnx_dtype(array.dtype), array.shape)
-                    for name, array in zip(node.input, inputs)]
-    graph_outputs = [onnx_helper.make_tensor_value_info(
-        name, np2onnx_dtype(output_dtype), output_shape)
-                     for name in node.output]
-    if use_weights:
-        # Add initializers for all inputs except the first
-        initializers = [onnx_helper.make_tensor(
-            name, np2onnx_dtype(array.dtype), array.shape, array.flatten().tolist())
-                        for name, array in zip(node.input[1:], inputs[1:])]
-    else:
-        initializers = []
-    graph = onnx_helper.make_graph(
-           [node], "RunNodeGraph_" + node.op_type,
-           graph_inputs, graph_outputs, initializer=initializers)
-    model = onnx_helper.make_model(graph)
-    return model
+        # outputs_tuple = namedtupledict('Outputs', output_names)(*outputs)
+        # return namedtupledict('Outputs', output_names)(*outputs)
 
 class TensorRTBackend(Backend):
     @classmethod
@@ -232,6 +147,7 @@ class TensorRTBackend(Backend):
         model -- An ONNX model as a deserialized protobuf, or a string or file-
                  object containing a serialized protobuf.
         """
+        print("PREPARE!")
         super(TensorRTBackend, cls).prepare(model, device, **kwargs)
         return TensorRTBackendRep(model, device, **kwargs)
     @classmethod
@@ -241,6 +157,7 @@ class TensorRTBackend(Backend):
                  object containing a serialized protobuf.
         inputs -- Input tensor(s) as a Numpy array or list of Numpy arrays.
         """
+        print("RUN MODEL!")
         return cls.prepare(model, device, **kwargs).run(inputs)
     @classmethod
     def run_node(cls, node, inputs, device='CUDA:0'):
@@ -249,16 +166,17 @@ class TensorRTBackend(Backend):
         Note: This function is intended for testing purposes only;
               use prepare() or run_model() for other purposes.
         """
-        super(TensorRTBackend, cls).run_node(node, inputs, device)
-        # HACK TODO: This is somewhat dodgy. We first try with weights for all
-        #            inputs but the first, then we try again with no weights if
-        #            the first try fails.
-        model = make_node_test_model(node, inputs, use_weights=True)
-        try: results = TensorRTBackend.prepare(model, device).run(inputs[:1])
-        except RuntimeError:
-            model = make_node_test_model(node, inputs, use_weights=False)
-            results = TensorRTBackend.prepare(model, device).run(inputs)
-        return results
+        print("RUN NODE!")
+        # super(TensorRTBackend, cls).run_node(node, inputs, device)
+        # # HACK TODO: This is somewhat dodgy. We first try with weights for all
+        # #            inputs but the first, then we try again with no weights if
+        # #            the first try fails.
+        # model = make_node_test_model(node, inputs, use_weights=True)
+        # try: results = TensorRTBackend.prepare(model, device).run(inputs[:1])
+        # except RuntimeError:
+        #     model = make_node_test_model(node, inputs, use_weights=False)
+        #     results = TensorRTBackend.prepare(model, device).run(inputs)
+        # return results
     @classmethod
     def supports_device(cls, device_str):
         device = Device(device_str)

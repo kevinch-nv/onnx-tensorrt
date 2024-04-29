@@ -15,6 +15,7 @@ def no_publish():
 REQUIRED_PACKAGES = [
     "pycuda",
     "numpy",
+    "polygraphy",
     "onnx"
 ]
 
