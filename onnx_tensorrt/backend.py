@@ -22,19 +22,10 @@ def cudaSetDevice(device_idx):
             error_string = error_string.decode("utf-8")
         raise RuntimeError("cudaSetDevice: " + error_string)
 
-def count_trailing_ones(vals):
-    count = 0
-    for val in reversed(vals):
-        if val != 1:
-            return count
-        count += 1
-    return count
-
-TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
+TRT_LOGGER = trt.Logger(trt.Logger.ERROR)
 
 class TensorRTBackendRep(BackendRep):
-    def __init__(self, model, device,
-            max_workspace_size=None, serialize_engine=False, verbose=False, **kwargs):
+    def __init__(self, model, device, **kwargs):
         if not isinstance(device, Device):
             device = Device(device)
         self._set_device(device)
@@ -43,13 +34,8 @@ class TensorRTBackendRep(BackendRep):
         self.network = self.builder.create_network(flags=0)
         self.parser = trt.OnnxParser(self.network, self._logger)
         self.config = self.builder.create_builder_config()
-        self.serialize_engine = serialize_engine
-        self.verbose = verbose
+        self.config.builder_optimization_level = 0 # For fastest engine building.
         self.dynamic = False
-
-        if self.verbose:
-            print(f'\nRunning {model.graph.name}...')
-            TRT_LOGGER.min_severity = trt.Logger.VERBOSE
 
         if not isinstance(model, six.string_types):
             model_str = model.SerializeToString()
@@ -67,10 +53,6 @@ class TensorRTBackendRep(BackendRep):
                     (error.file(), error.line(), error.func(),
                      error.code(), error.desc()))
             raise RuntimeError(msg)
-        if max_workspace_size is None:
-            max_workspace_size = 1 << 28
-
-        self.config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, max_workspace_size)
 
         num_inputs = self.network.num_inputs
         for idx in range(num_inputs):
@@ -78,12 +60,6 @@ class TensorRTBackendRep(BackendRep):
             if inp_tensor.is_shape_tensor or -1 in inp_tensor.shape:
                 self.dynamic = True
                 break
-
-        if self.verbose:
-            for layer in self.network:
-                print(layer)
-
-            print(f'Output shape: {self.network[-1].get_output(0).shape}')
 
         if self.dynamic:
             if self.verbose:
@@ -141,7 +117,6 @@ class TensorRTBackendRep(BackendRep):
 
     def _deserialize(self, trt_blob):
         self.runtime = trt.Runtime(TRT_LOGGER)
-        del self.parser # Parser no longer needed for ownership of plugins
         trt_engine = self.runtime.deserialize_cuda_engine(trt_blob)
         return trt_engine
 
@@ -159,32 +134,14 @@ class TensorRTBackendRep(BackendRep):
         output_names = [output.name for output in self.engine.outputs]
 
         for i, (name, array) in enumerate(zip(output_names, outputs)):
-            output_shape = self._output_shapes[name]
-            # HACK WAR for unknown output shape in run_node
-            if output_shape == (-99,):
-                # WAR for TRT requiring at least 2 dims (NC)
-                min_dims = 2
-                if _tensorrt_version()[0] < 4:
-                    # WAR for TRT only supporting 4D (NCHW) tensors
-                    min_dims = 4
-                if array.ndim == min_dims:
-                    npadding_dims = count_trailing_ones(array.shape)
-                    if npadding_dims > 0:
-                        outputs[i] = array.reshape(
-                            array.shape[:-npadding_dims])
-            else:
-                # HACK WAR replace fixed batch dim with variable
-                if self._output_dtype[name] == onnx.TensorProto.INT64 and array.dtype == np.int32:
-                    casted_output = np.array(outputs[i], dtype=np.int64)
-                    if np.equal(outputs[i], casted_output).all():
-                        outputs[i] = np.array(outputs[i], dtype=np.int64)
-                if self._output_dtype[name] == onnx.TensorProto.DOUBLE and array.dtype == np.float32:
-                    casted_output = np.array(outputs[i], dtype=np.double)
-                    if np.equal(outputs[i], casted_output).all():
-                        outputs[i] = np.array(outputs[i], dtype=np.double)
+            # Work around some types that TensorRT doesn't support but can reasonably represent through casting.
+            if self._output_dtype[name] == onnx.TensorProto.DOUBLE and array.dtype == np.float32:
+                casted_output = np.array(outputs[i], dtype=np.double)
+                if np.equal(outputs[i], casted_output).all():
+                    outputs[i] = np.array(outputs[i], dtype=np.double)
 
         outputs_tuple = namedtupledict('Outputs', output_names)(*outputs)
-        return namedtupledict('Outputs', output_names)(*outputs)
+        return outputs_tuple
 
 def np2onnx_dtype(np_dtype):
     if np_dtype == np.dtype('float32'):
@@ -241,6 +198,7 @@ class TensorRTBackend(Backend):
                  object containing a serialized protobuf.
         inputs -- Input tensor(s) as a Numpy array or list of Numpy arrays.
         """
+        print("RUNNING MODEL!")
         return cls.prepare(model, device, **kwargs).run(inputs)
     @classmethod
     def run_node(cls, node, inputs, device='CUDA:0'):
@@ -249,16 +207,17 @@ class TensorRTBackend(Backend):
         Note: This function is intended for testing purposes only;
               use prepare() or run_model() for other purposes.
         """
-        super(TensorRTBackend, cls).run_node(node, inputs, device)
-        # HACK TODO: This is somewhat dodgy. We first try with weights for all
-        #            inputs but the first, then we try again with no weights if
-        #            the first try fails.
-        model = make_node_test_model(node, inputs, use_weights=True)
-        try: results = TensorRTBackend.prepare(model, device).run(inputs[:1])
-        except RuntimeError:
-            model = make_node_test_model(node, inputs, use_weights=False)
-            results = TensorRTBackend.prepare(model, device).run(inputs)
-        return results
+        print("RUNNING NODE!")
+        # super(TensorRTBackend, cls).run_node(node, inputs, device)
+        # # HACK TODO: This is somewhat dodgy. We first try with weights for all
+        # #            inputs but the first, then we try again with no weights if
+        # #            the first try fails.
+        # model = make_node_test_model(node, inputs, use_weights=True)
+        # try: results = TensorRTBackend.prepare(model, device).run(inputs[:1])
+        # except RuntimeError:
+        #     model = make_node_test_model(node, inputs, use_weights=False)
+        #     results = TensorRTBackend.prepare(model, device).run(inputs)
+        # return results
     @classmethod
     def supports_device(cls, device_str):
         device = Device(device_str)

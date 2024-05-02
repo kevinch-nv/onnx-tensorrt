@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
-import tensorrt as trt
 import pycuda.driver
 import pycuda.gpuarray
 import pycuda.autoinit
+import tensorrt as trt
 import numpy as np
 from six import string_types
 
