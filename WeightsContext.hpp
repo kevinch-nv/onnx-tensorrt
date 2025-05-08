@@ -65,6 +65,11 @@ public:
     bool convertOnnxWeights(
         ::ONNX_NAMESPACE::TensorProto const& onnxTensor, ShapedWeights* weights, bool ownAllWeights = false);
 
+    // Function to read data from an ONNX Tensor and move it into a ShapedWeights object.
+    // Handles external weights as well.
+    bool convertOnnxWeights2(
+        ::ONNX_NAMESPACE::TensorProto const& onnxTensor, ShapedWeights* weights, void const* data, int64_t size, bool ownAllWeights = false);
+
     // Helper function to convert weightValues' type from fp16/bf16 to fp32.
     template <typename DataType>
     [[nodiscard]] float* convertToFp32(ShapedWeights const& w);

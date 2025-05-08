@@ -156,6 +156,8 @@ class ImporterContext
     //! Vector to hold expected graph outputs
     std::vector<::ONNX_NAMESPACE::ValueInfoProto> mGraphOutputNames;
 
+    bool skipInitializers{false};
+
 public:
     ImporterContext(nvinfer1::INetworkDefinition* network, nvinfer1::ILogger* logger)
         : mNetwork(network)
@@ -385,6 +387,18 @@ public:
         assert(mNetwork != nullptr);
         return mNetwork->getFlag(nvinfer1::NetworkDefinitionCreationFlag::kSTRONGLY_TYPED);
     }
+
+    void setSkip(bool const skip)
+    {
+        skipInitializers = skip;
+    }
+    bool getSkip()
+    {
+        return skipInitializers;
+    }
+
+    StringMap<std::pair<char const*, int64_t>> externalInits;
+
 };
 
 typedef std::vector<TensorOrWeights> NodeOutputs;

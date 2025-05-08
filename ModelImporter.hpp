@@ -31,7 +31,7 @@ class ModelImporter : public nvonnxparser::IParser
 
 protected:
     StringMap<NodeImporter> _op_importers;
-    virtual void importModel(::ONNX_NAMESPACE::ModelProto const& model);
+    virtual void importModel(::ONNX_NAMESPACE::ModelProto const& model, bool const readWeights = true);
 
 private:
     ImporterContext mImporterCtx;
@@ -143,6 +143,19 @@ public:
     bool parseFromFile(char const* onnxModelFile, int32_t verbosity) noexcept override;
 
     virtual char const* const* getUsedVCPluginLibraries(int64_t& nbPluginLibs) const noexcept override;
+
+    bool parseArb(void* arb) noexcept override;
+
+    bool loadModelProto(void const* serialized_onnx_model, size_t serialized_onnx_model_size, const char* model_path = nullptr) noexcept override;
+
+    bool loadInitializers(const char** names, const char** data, int64_t const* sizes, size_t size) noexcept override;
+
+    bool parseModelProto() noexcept override;
+
+    std::pair<bool, ModelImporter::SubGraphSupportVector_t> doSupportsModelV2();
+
+    bool supportsModelV3() noexcept override;
+
 };
 
 } // namespace onnx2trt

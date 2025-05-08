@@ -404,6 +404,17 @@ public:
     //! \return Pointer to the subgraph nodes array. This pointer is owned by the Parser.
     //!
     virtual int64_t* getSubgraphNodes(int64_t const index, int64_t& subgraphLength) noexcept = 0;
+
+    virtual bool parseArb(void* arb) noexcept = 0;
+
+    virtual bool loadModelProto(void const* serialized_onnx_model, size_t serialized_onnx_model_size, const char* model_path = nullptr) noexcept = 0;
+
+    virtual bool loadInitializers(const char** names, const char** data, int64_t const* sizes, size_t size) noexcept = 0;
+
+    virtual bool parseModelProto() noexcept = 0;
+
+    virtual bool supportsModelV3() noexcept = 0;
+
 };
 
 //!

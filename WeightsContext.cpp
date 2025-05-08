@@ -483,6 +483,94 @@ float* WeightsContext::getFP32Values(ShapedWeights const& w)
     ONNXTRT_THROW(MAKE_ERROR("Invalid type found in getFP32Values() call.", ErrorCode::kINTERNAL_ERROR));
 }
 
+bool WeightsContext::convertOnnxWeights2(::ONNX_NAMESPACE::TensorProto const& onnxTensor, ShapedWeights* weights, void const* data, int64_t size, bool ownAllWeights)
+{
+    auto* ctx = this; // For logging macros.
+
+    // Sanity check for onnxTensors
+    if (!validateOnnxInitializer(onnxTensor))
+    {
+        LOG_ERROR("ONNX initializer " << onnxTensor.name() << " cannot be imported into TensorRT!");
+        return false;
+    }
+
+    void* dataPtr{nullptr};
+    size_t nbytes{0};
+    auto onnxDtype = onnxTensor.data_type();
+
+    nvinfer1::Dims shape{};
+    shape.nbDims = onnxTensor.dims().size();
+    std::copy_n(onnxTensor.dims().begin(), shape.nbDims, shape.d);
+
+    // Cast non-native TRT types to their corresponding proxy types
+    if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::UINT8)
+    {
+        onnxDtype = ::ONNX_NAMESPACE::TensorProto::INT32;
+        dataPtr = convertUINT8(reinterpret_cast<uint8_t const*>(data), shape);
+        size_t const sizeOffset = (sizeof(int32_t) / sizeof(uint8_t));
+        if (multiplicationWillOverflow(nbytes, sizeOffset))
+        {
+            return false;
+        }
+        nbytes = size * sizeOffset;
+    }
+    else if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::DOUBLE)
+    {
+        dataPtr = convertDouble(reinterpret_cast<double const*>(data), shape);
+        nbytes = size / (sizeof(double) / sizeof(float));
+        onnxDtype = ::ONNX_NAMESPACE::TensorProto::FLOAT;
+    }
+
+    // Check for supported types that can be found in the int32_data field in the TensorProto
+    // https://github.com/onnx/onnx/blob/609282efe8d4871f620141223139bbb99bdbe9f6/onnx/onnx.proto#L567
+    else if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT32 || onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT64
+        || onnxDtype == ::ONNX_NAMESPACE::TensorProto::FLOAT16 || onnxDtype == ::ONNX_NAMESPACE::TensorProto::BFLOAT16
+        || onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT8 || onnxDtype == ::ONNX_NAMESPACE::TensorProto::BOOL
+        || onnxDtype == ::ONNX_NAMESPACE::TensorProto::INT4 || onnxDtype == ::ONNX_NAMESPACE::TensorProto::FLOAT4E2M1)
+    {
+        dataPtr = (void*) data;
+        nbytes = size;
+        if (ownAllWeights)
+        {
+            dataPtr = ownWeights(dataPtr, onnxDtype, shape, nbytes);
+        }
+    }
+    else if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::FLOAT)
+    {
+        dataPtr = (void*) data;
+        nbytes = size;
+        if (ownAllWeights)
+        {
+            dataPtr = ownWeights(dataPtr, onnxDtype, shape, nbytes);
+        }
+    }
+    else if (onnxDtype == ::ONNX_NAMESPACE::TensorProto::FLOAT8E4M3FN)
+    {
+        dataPtr = (void*) data;
+        nbytes = size;
+        if (ownAllWeights)
+        {
+            dataPtr = ownWeights(dataPtr, onnxDtype, shape, nbytes);
+        }
+    }
+    else
+    {
+        LOG_ERROR("Found unsupported datatype (" << onnxDtype << ") when importing initializer: " << onnxTensor.name());
+        return false;
+    }
+    onnx2trt::ShapedWeights trt_weights(onnxDtype, dataPtr, shape);
+    // Sanity check that weights were converted properly
+    if (trt_weights.size_bytes() != nbytes)
+    {
+        LOG_ERROR("Size mismatch when importing initializer: " << onnxTensor.name() << ". Expected size: " << nbytes
+                                                            << " , actual size: " << trt_weights.size_bytes());
+        return false;
+    }
+
+    *weights = trt_weights;
+    return true;
+}
+
 ShapedWeights WeightsContext::createNamedTempWeights(ShapedWeights::DataType type, nvinfer1::Dims const& shape,
     std::set<std::string>& namesSet, int64_t& suffixCounter, bool batchNormNode)
 {
