@@ -405,8 +405,6 @@ public:
     //!
     virtual int64_t* getSubgraphNodes(int64_t const index, int64_t& subgraphLength) noexcept = 0;
 
-    virtual bool parseArb(void* arb) noexcept = 0;
-
     virtual bool loadModelProto(void const* serialized_onnx_model, size_t serialized_onnx_model_size, const char* model_path = nullptr) noexcept = 0;
 
     virtual bool loadInitializers(const char** names, const char** data, int64_t const* sizes, size_t size) noexcept = 0;
@@ -477,6 +475,12 @@ public:
     virtual void clearErrors() = 0;
 
     virtual ~IParserRefitter() noexcept = default;
+
+    virtual bool loadModelProto(void const* serialized_onnx_model, size_t serialized_onnx_model_size, const char* model_path = nullptr) noexcept = 0;
+
+    virtual bool loadInitializers(const char** names, const char** data, int64_t const* sizes, size_t size) noexcept = 0;
+
+    virtual bool refitModelProto() noexcept = 0;
 };
 
 } // namespace nvonnxparser

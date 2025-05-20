@@ -397,8 +397,6 @@ public:
         return skipInitializers;
     }
 
-    StringMap<std::pair<char const*, int64_t>> externalInits;
-
 };
 
 typedef std::vector<TensorOrWeights> NodeOutputs;

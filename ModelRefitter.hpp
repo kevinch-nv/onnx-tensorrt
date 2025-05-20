@@ -103,6 +103,13 @@ public:
     {
         mErrors.clear();
     }
+
+    bool loadModelProto(void const* serialized_onnx_model, size_t serialized_onnx_model_size, const char* model_path = nullptr) noexcept override;
+
+    bool loadInitializers(const char** names, const char** data, int64_t const* sizes, size_t size) noexcept override;
+
+    bool refitModelProto() noexcept override;
+
 };
 
 } // namespace onnx2trt

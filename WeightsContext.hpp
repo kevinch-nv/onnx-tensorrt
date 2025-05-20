@@ -28,6 +28,8 @@ class WeightsContext
     };
 
     using BufferPtr = std::unique_ptr<void, BufferDeleter>;
+    template <typename T>
+    using StringMap = std::unordered_map<std::string, T>;
 
     nvinfer1::ILogger* mLogger;
 
@@ -36,6 +38,9 @@ class WeightsContext
 
     // Keeps track of the absolute location of the file in order to read external weights.
     std::string mOnnxFileLocation;
+
+    // Map holding external weight data
+    StringMap<std::pair<char const*, int64_t>> mExternalInits;
 
 public:
     WeightsContext(nvinfer1::ILogger* logger)
@@ -105,6 +110,12 @@ public:
     {
         return *mLogger;
     }
+
+    StringMap<std::pair<char const*, int64_t>>& externalInits()
+    {
+        return mExternalInits;
+    }
+
 };
 
 template <typename DataType>

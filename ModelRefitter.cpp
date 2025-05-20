@@ -415,4 +415,57 @@ bool ModelRefitter::refitFromFile(char const* onnxModelFile) noexcept
 
     return false;
 }
+
+bool ModelRefitter::loadModelProto(
+    void const* serializedOnnxModel, size_t serializedOnnxModelSize, char const* modelPath) noexcept
+{
+    ONNXTRT_TRY
+    {
+        if (modelPath)
+        {
+            // Keep track of the absolute path to the ONNX file.
+            mWeightsContext.setOnnxFileLocation(modelPath);
+        }
+
+        deserializeOnnxModel(serializedOnnxModel, serializedOnnxModelSize, &onnx_model);
+
+        return true;
+    }
+    ONNXTRT_CATCH_LOG(mLogger)
+    return false;
+}
+
+bool ModelRefitter::loadInitializers(const char** names, const char** data, int64_t const* sizes, size_t size) noexcept
+{
+    ONNXTRT_TRY
+    {
+        std::cout << "in load initializers, num of initializes: " << size << std::endl;
+
+        for (size_t i = 0; i < size; i++)
+        {
+            mWeightsContext.externalInits().insert({std::string(names[i]), {data[i], sizes[i]}});
+        }
+
+        return true;
+    }
+    ONNXTRT_CATCH_LOG(mLogger)
+    return false;
+}
+
+bool ModelRefitter::refitModelProto() noexcept
+{
+    ONNXTRT_TRY
+    {
+        refittableWeights = getRefittableWeights();
+        if (!refittableWeights.empty())
+        {
+            refitOnnxWeights(onnx_model);
+        }
+        return true;
+    }
+    ONNXTRT_CATCH_LOG(mLogger)
+    return false;
+}
+
+
 } // namespace onnx2trt
