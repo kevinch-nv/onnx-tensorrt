@@ -510,6 +510,13 @@ bool WeightsContext::convertOnnxWeights(
                                                             << " , actual size: " << trt_weights.size_bytes());
         return false;
     }
+
+    if (isUserWeight && nbytes == 0)
+    {
+        LOG_WARNING("User weights" << initName << " was provided with size 0 but a non-nullptr address was provided. Overwritting to a nullptr.")
+        trt_weights.values = nullptr;
+    }
+
     *weights = trt_weights;
     return true;
 }

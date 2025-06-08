@@ -4405,12 +4405,12 @@ DEFINE_BUILTIN_OP_IMPORTER(RandomUniformLike)
     ONNXTRT_CHECK_NODE((inputs.size() == 1),
         "The RandomUniformLike operator requires exactly 1 input. Current input size = " << inputs.size() << ".", node,
         nodeIdx, ErrorCode::kINVALID_NODE);
-    ONNXTRT_CHECK_NODE((inputs.at(0).is_tensor()), "The input tensor cannot be an initializer.", node, nodeIdx,
-        nvonnxparser::ErrorCode::kUNSUPPORTED_NODE);
-    auto& input = inputs.at(0).tensor();
-    auto const inputShape = shapeOf(input);
+
+    // Copies shape and type information from the input.
+    auto inputLike = inputs.at(0);
+    auto const inputShape = shapeOf(inputLike);
     OnnxAttrs const attrs(node, ctx);
-    auto const dType = input.getType();
+    auto const dType = inputLike.getDataType();
 
     return randomHelper(ctx, node, nodeIdx, inputShape, attrs, dType, nvinfer1::FillOperation::kRANDOM_UNIFORM);
 }
@@ -4430,12 +4430,12 @@ DEFINE_BUILTIN_OP_IMPORTER(RandomNormalLike)
     ONNXTRT_CHECK_NODE((inputs.size() == 1),
         "The RandomNormalLike operator requires exactly 1 input. Current input size = " << inputs.size() << ".", node,
         nodeIdx, ErrorCode::kINVALID_NODE);
-    ONNXTRT_CHECK_NODE((inputs.at(0).is_tensor()), "The input tensor cannot be an initializer.", node, nodeIdx,
-        nvonnxparser::ErrorCode::kUNSUPPORTED_NODE);
-    auto& input = inputs.at(0).tensor();
-    auto const inputShape = shapeOf(input);
+
+    // Copies shape and type information from the input.
+    auto inputLike = inputs.at(0);
+    auto const inputShape = shapeOf(inputLike);
     OnnxAttrs const attrs(node, ctx);
-    auto const dType = input.getType();
+    auto const dType = inputLike.getDataType();
 
     return randomHelper(ctx, node, nodeIdx, inputShape, attrs, dType, nvinfer1::FillOperation::kRANDOM_NORMAL);
 }
