@@ -143,6 +143,11 @@ public:
     bool parseFromFile(char const* onnxModelFile, int32_t verbosity) noexcept override;
 
     virtual char const* const* getUsedVCPluginLibraries(int64_t& nbPluginLibs) const noexcept override;
+
+    bool parseORT(OrtGraph const* graph) noexcept override
+    {
+        return true;
+    }
 };
 
 } // namespace onnx2trt

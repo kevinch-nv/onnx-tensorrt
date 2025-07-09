@@ -69,9 +69,9 @@ set(API_TESTS_SOURCES
 )
 
 # Find protobuf if it's not a target.
-if (NOT TARGET protobuf::libprotobuf)
-  FIND_PACKAGE(Protobuf REQUIRED)
-endif()
+# if (NOT TARGET protobuf::libprotobuf)
+#   FIND_PACKAGE(Protobuf REQUIRED)
+# endif()
 
 # Set protobuf libraries between full / lite.
 if (ONNX_USE_LITE_PROTO)
@@ -105,6 +105,13 @@ find_path(TENSORRT_INCLUDE_DIR NvInfer.h
   HINTS ${TENSORRT_ROOT} ${CUDA_TOOLKIT_ROOT_DIR}
   PATH_SUFFIXES include)
 MESSAGE(STATUS "Found TensorRT headers at ${TENSORRT_INCLUDE_DIR}")
+
+# ONNXRT
+set(ONNXRT_ROOT "/ssd/ONNXRT/onnxruntime")
+find_path(ONNXRT_INCLUDE_DIR onnxruntime_c_api.h
+  HINTS ${ONNXRT_ROOT}
+  PATH_SUFFIXES include/onnxruntime/core/session)
+MESSAGE(STATUS "Found ONNXRT headers at ${ONNXRT_INCLUDE_DIR}")
 
 # TensorRT Python Headers
 find_path(TENSORRT_PYTHON_INCLUDE_DIR NvInferPythonPlugin.h
@@ -145,12 +152,16 @@ endif()
 # Output static library name is the same cross-platform.
 set(nvonnxparser_lib_name_static "nvonnxparser_static")
 
+# ONNXRT library
+set(ORT_LIB "onnxruntime")
+
 # --------------------------------
 # Importer library
 # --------------------------------
 add_library(${nvonnxparser_lib_name} SHARED ${IMPORTER_SOURCES})
-target_include_directories(${nvonnxparser_lib_name} PUBLIC ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${TENSORRT_PYTHON_INCLUDE_DIR} ${CUDA_INCLUDE_DIR})
-target_link_libraries(${nvonnxparser_lib_name} PUBLIC onnx_proto ${PROTOBUF_LIBRARY})
+target_include_directories(${nvonnxparser_lib_name} PUBLIC ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${TENSORRT_PYTHON_INCLUDE_DIR} ${CUDA_INCLUDE_DIR} ${ONNXRT_INCLUDE_DIR})
+target_link_directories(${nvonnxparser_lib_name} PUBLIC "/ssd/ORT_LIBS")
+target_link_libraries(${nvonnxparser_lib_name} PUBLIC onnx_proto ${PROTOBUF_LIBRARY} ${ORT_LIB})
 set_target_properties(${nvonnxparser_lib_name} PROPERTIES
   VERSION   ${ONNX2TRT_VERSION}
   SOVERSION ${ONNX2TRT_MAJOR}
@@ -161,8 +172,9 @@ set_target_properties(${nvonnxparser_lib_name} PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${TRT_OUT_DIR}"
 )
 add_library(${nvonnxparser_lib_name_static} STATIC ${IMPORTER_SOURCES})
-target_include_directories(${nvonnxparser_lib_name_static} PUBLIC ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${TENSORRT_PYTHON_INCLUDE_DIR} ${CUDA_INCLUDE_DIR})
-target_link_libraries(${nvonnxparser_lib_name_static} PUBLIC onnx_proto ${PROTOBUF_LIBRARY})
+target_include_directories(${nvonnxparser_lib_name_static} PUBLIC ${ONNX_INCLUDE_DIRS} ${TENSORRT_INCLUDE_DIR} ${TENSORRT_PYTHON_INCLUDE_DIR} ${CUDA_INCLUDE_DIR} ${ONNXRT_INCLUDE_DIR})
+target_link_directories(${nvonnxparser_lib_name} PUBLIC "/ssd/ORT_LIBS")
+target_link_libraries(${nvonnxparser_lib_name_static} PUBLIC onnx_proto ${PROTOBUF_LIBRARY} ${ORT_LIB})
 set_target_properties(${nvonnxparser_lib_name_static} PROPERTIES
   ARCHIVE_OUTPUT_DIRECTORY "${TRT_OUT_DIR}"
   LIBRARY_OUTPUT_DIRECTORY "${TRT_OUT_DIR}"

@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <string>
 #include <vector>
+#include "onnxruntime_c_api.h"
 
 //!
 //! \file NvOnnxParser.h
@@ -408,6 +409,9 @@ public:
     //! \return Pointer to the subgraph nodes array. This pointer is owned by the Parser.
     //!
     virtual int64_t* getSubgraphNodes(int64_t const index, int64_t& subgraphLength) noexcept = 0;
+
+    virtual bool parseORT(OrtGraph const* graph) noexcept = 0;
+
 };
 
 //!
